@@ -19,8 +19,17 @@ from typing import List
 
 from .models import Message, User, Photo
 from .schema import (
-    UserTokenSchema, UserLoginSchema, UserSchema, UserCreateSchema,
-    UserUpdateSchema, PaginatedUsersOut, PaginatedMessagesOut, MessageSchema, MessageInSchema, PhotoSchema, ErrorSchema
+    UserTokenSchema,
+    UserLoginSchema,
+    UserSchema,
+    UserCreateSchema,
+    UserUpdateSchema,
+    PaginatedUsersOut,
+    PaginatedMessagesOut,
+    MessageSchema,
+    MessageInSchema,
+    PhotoSchema,
+    ErrorSchema,
 )
 
 logger = logging.getLogger(__name__)
@@ -170,9 +179,7 @@ async def update_user(request, user_id: int, payload: UserUpdateSchema):
         return 404, {"detail": "User not found"}
 
 
-@router.delete(
-    "/users/{user_id}", response={204: None, 404: ErrorSchema}, auth=JWTAuth()
-)
+@router.delete("/users/{user_id}", response={204: None, 404: ErrorSchema}, auth=JWTAuth())
 async def delete_user(request, user_id: int):
     if request.user.id != user_id and not request.user.is_staff:
         return 403, {"detail": "No permission to delete"}
@@ -262,19 +269,17 @@ async def get_photos(request):
     return photos
 
 
-@router.post(
-    "/photos", response={201: PhotoSchema, 400: ErrorSchema}, auth=JWTAuth()
-)
+@router.post("/photos", response={201: PhotoSchema, 400: ErrorSchema}, auth=JWTAuth())
 async def create_photo(request, file: UploadedFile = File(...)):
     try:
         # Validate file type
         if not file.content_type.startswith("image/"):
             return 400, {"detail": "Only image files are allowed"}
-        
+
         # Validate file size (5MB limit)
         if file.size > 5 * 1024 * 1024:
             return 400, {"detail": "File size must not exceed 5MB"}
-        
+
         # Save file and create photo record
         photo = await Photo.objects.acreate(user=request.user, image=file)
         return 201, photo

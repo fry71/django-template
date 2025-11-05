@@ -10,7 +10,7 @@ class User(AbstractUser):
     patronymic = models.CharField(max_length=255, blank=True, null=True, default=None)
     bio = models.TextField(max_length=500, blank=True, null=True, default=None)
     photo = models.ImageField(upload_to="profile_photos/", null=True, blank=True)
-    
+
     REQUIRED_FIELDS = ["email"]
 
     def __str__(self) -> str:

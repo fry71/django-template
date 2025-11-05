@@ -15,7 +15,9 @@ JWT_SECRET_KEY = getenv("JWT_SECRET_KEY", _default_jwt_secret_key)
 
 # Проверка на использование дефолтных ключей
 if _default_secret_key == SECRET_KEY:
-    logger.warning("You are using a default Django secret key - CHANGE THIS IN PRODUCTION!")
+    logger.warning(
+        "You are using a default Django secret key - CHANGE THIS IN PRODUCTION!"
+    )
 
 if _default_jwt_secret_key == JWT_SECRET_KEY:
     logger.warning("You are using a default JWT secret key - CHANGE THIS IN PRODUCTION!")
@@ -31,14 +33,18 @@ DEBUG = getenv("DJANGO_DEBUG", "false").lower() == "true"
 # Production security settings
 SECURE_SSL_REDIRECT = getenv("SECURE_SSL_REDIRECT", "false").lower() == "true"
 SECURE_HSTS_SECONDS = int(getenv("SECURE_HSTS_SECONDS", "0"))
-SECURE_HSTS_INCLUDE_SUBDOMAINS = getenv("SECURE_HSTS_INCLUDE_SUBDOMAINS", "false").lower() == "true"
+SECURE_HSTS_INCLUDE_SUBDOMAINS = (
+    getenv("SECURE_HSTS_INCLUDE_SUBDOMAINS", "false").lower() == "true"
+)
 SECURE_HSTS_PRELOAD = getenv("SECURE_HSTS_PRELOAD", "false").lower() == "true"
 
 SESSION_COOKIE_SECURE = getenv("SESSION_COOKIE_SECURE", "false").lower() == "true"
 CSRF_COOKIE_SECURE = getenv("CSRF_COOKIE_SECURE", "false").lower() == "true"
 
 # Content Security Policy
-SECURE_CONTENT_TYPE_NOSNIFF = getenv("SECURE_CONTENT_TYPE_NOSNIFF", "true").lower() == "true"
+SECURE_CONTENT_TYPE_NOSNIFF = (
+    getenv("SECURE_CONTENT_TYPE_NOSNIFF", "true").lower() == "true"
+)
 SECURE_BROWSER_XSS_FILTER = getenv("SECURE_BROWSER_XSS_FILTER", "true").lower() == "true"
 X_FRAME_OPTIONS = getenv("X_FRAME_OPTIONS", "DENY")
 

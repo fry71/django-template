@@ -11,6 +11,7 @@ logger = logging.getLogger(__name__)
 
 __all__ = ["broker", "common"]
 
+
 # Registration tasks from apps
 def register_tasks():
     """Register tasks from all Django apps."""
@@ -21,7 +22,7 @@ def register_tasks():
             logger.info(f"Tasks module loaded: {tasks_module}")
         except ImportError:
             continue
-    
+
     # Загружаем тестовые задачи
     try:
         import_module("tasks.test_tasks")
@@ -29,11 +30,13 @@ def register_tasks():
     except ImportError as e:
         logger.warning(f"Could not load test tasks: {e}")
 
+
 # Инициализация Django и регистрация задач
 os.environ.setdefault("DJANGO_SETTINGS_MODULE", "api.config.settings")
 
 try:
     import django
+
     django.setup()
     register_tasks()
 except Exception as e:

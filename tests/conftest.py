@@ -27,7 +27,6 @@ def user_data():
     }
 
 
-
 @pytest.fixture
 def test_user(user_data):
     """Фикстура для создания тестового пользователя"""

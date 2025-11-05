@@ -20,7 +20,9 @@ if _default_db_url == DB_URL:
 CONN_MAX_AGE = int(getenv("CONN_MAX_AGE", default="600"))
 
 # SSL настройки для PostgreSQL
-DB_SSL_MODE = getenv("DB_SSL_MODE", "prefer")  # disable, allow, prefer, require, verify-ca, verify-full
+DB_SSL_MODE = getenv(
+    "DB_SSL_MODE", "prefer"
+)  # disable, allow, prefer, require, verify-ca, verify-full
 DB_SSL_CERT = getenv("DB_SSL_CERT")
 DB_SSL_KEY = getenv("DB_SSL_KEY")
 DB_SSL_CA = getenv("DB_SSL_CA")
@@ -35,17 +37,17 @@ DB_PORT = getenv("POSTGRES_PORT", "5432")
 # Database timeout settings
 DB_CONNECT_TIMEOUT = int(getenv("DB_CONNECT_TIMEOUT", default="10"))
 DB_OPTIONS = {
-    'connect_timeout': DB_CONNECT_TIMEOUT,
+    "connect_timeout": DB_CONNECT_TIMEOUT,
 }
 
 # SSL settings для PostgreSQL
 if DB_SSL_MODE != "disable":
     if DB_SSL_CA:
-        DB_OPTIONS['sslmode'] = DB_SSL_MODE
-        DB_OPTIONS['sslrootcert'] = DB_SSL_CA
+        DB_OPTIONS["sslmode"] = DB_SSL_MODE
+        DB_OPTIONS["sslrootcert"] = DB_SSL_CA
         if DB_SSL_CERT and DB_SSL_KEY:
-            DB_OPTIONS['sslcert'] = DB_SSL_CERT
-            DB_OPTIONS['sslkey'] = DB_SSL_KEY
+            DB_OPTIONS["sslcert"] = DB_SSL_CERT
+            DB_OPTIONS["sslkey"] = DB_SSL_KEY
         logger.info(f"SSL mode: {DB_SSL_MODE}")
     else:
         logger.warning("SSL mode set but no CA certificate provided")
@@ -57,6 +59,8 @@ DATABASES = {
 # Дополнительные настройки для PostgreSQL
 if DATABASES["default"]["ENGINE"] == "django.db.backends.postgresql":
     # Дополнительные PostgreSQL настройки
-    DATABASES["default"].update({
-        'OPTIONS': DB_OPTIONS,
-    })
+    DATABASES["default"].update(
+        {
+            "OPTIONS": DB_OPTIONS,
+        }
+    )
