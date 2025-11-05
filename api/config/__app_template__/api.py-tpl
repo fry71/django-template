@@ -1,0 +1,17 @@
+from __future__ import annotations
+
+from ninja import NinjaAPI
+
+
+
+api = NinjaAPI(
+    title="{{ app_name }} API",
+    description="API для {{ app_name }}",
+    docs_url="/docs/",
+    openapi_url="/openapi.json",
+    urls_namespace="api-{{ app_name }}",
+)
+
+@api.get("/", response=str)
+def index(request):
+    return "{{ app_name }} API"

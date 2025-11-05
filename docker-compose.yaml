@@ -1,0 +1,62 @@
+# docker-compose.yml
+version: '3.8'
+
+services:
+  web:
+    build: .
+    ports:
+      - "8000:8000"
+    environment:
+      - DEBUG=true
+      - DATABASE_URL=postgres://user:password@db:5432/django_gateway
+      - REDIS_URL=redis://redis:6379/0
+      - JWT_SECRET_KEY=development-jwt-secret-key
+    volumes:
+      - .:/application
+      - static_volume:/application/staticfiles
+      - media_volume:/application/media
+    depends_on:
+      - db
+      - redis
+    command: >
+      sh -c "uv run python manage.py migrate &&
+             uv run python manage.py collectstatic --noinput &&
+             uv run python manage.py runserver 0.0.0.0:8000"
+
+  worker:
+    build: .
+    environment:
+      - DEBUG=true
+      - DATABASE_URL=postgres://user:password@db:5432/django_gateway
+      - REDIS_URL=redis://redis:6379/0
+    volumes:
+      - .:/application
+    depends_on:
+      - db
+      - redis
+    command: uv run taskiq worker tasks.broker:broker
+
+  db:
+    image: postgres:15
+    environment:
+      POSTGRES_DB: django_gateway
+      POSTGRES_USER: user
+      POSTGRES_PASSWORD: password
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    ports:
+      - "5432:5432"
+
+  redis:
+    image: valkey/valkey:7.2
+    ports:
+      - "6379:6379"
+    command: valkey-server --appendonly yes
+    volumes:
+      - redis_data:/data
+
+volumes:
+  postgres_data:
+  redis_data:
+  static_volume:
+  media_volume:

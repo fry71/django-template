@@ -1,0 +1,26 @@
+# To get started with Dependabot version updates, you'll need to specify which
+# package ecosystems to update and where the package manifests are located.
+# Please see the documentation for all configuration options:
+# https://docs.github.com/code-security/dependabot/dependabot-version-updates/configuration-options-for-the-dependabot.yml-file
+
+version: 2
+updates:
+  # Configuration for pip
+  - package-ecosystem: "pip"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+    # Define groups for pip dependencies
+    groups:
+      # Group name: 'production-dependencies'
+      production-dependencies:
+        patterns:
+          - "django*"  # Note the hyphen and space
+          - "psycopg*"
+          - "gunicorn*"
+      # Group name: 'dev-dependencies'
+      dev-dependencies:
+        patterns:
+          - "*"  # This will group all other dependencies
+        dependency-type: "development"
+

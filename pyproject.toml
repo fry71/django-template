@@ -1,0 +1,137 @@
+[project]
+name = "django-gateway"
+version = "0.1.0"
+description = "API Template with Django, Django Ninja, Taskiq"
+keywords = ["django", "async", "websockets", "api", "template"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Environment :: Web Environment",
+    "Framework :: Django",
+    "Framework :: Django :: 5.2",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Internet :: WWW/HTTP",
+    "Topic :: Internet :: WWW/HTTP :: Dynamic Content",
+    "Topic :: Software Development :: Libraries :: Python Modules",
+    ]
+readme = "README.md"
+requires-python = ">=3.13"
+tool.uv.package = true
+asyncio_mode = "auto"
+DJANGO_SETTINGS_MODULE = "api.config.settings"
+dependencies = [
+    # Core
+    "django>=5.2",
+    "uvicorn[standard]",
+    "uvicorn_worker",
+    "django-cacheops",
+    "django-cors-headers",
+    "split_settings",
+    "django-ipware",
+    "django-storages",
+    "django-silk",
+    "django-split-settings",
+    "colorlog",
+    "twisted",
+    
+    # Async & Task Queue
+    "channels",
+    "channels-redis",
+    "taskiq",
+    "taskiq-redis",
+
+    # API
+    "django-ninja>=1.4.3",
+    "pyjwt",
+    "aiogram",
+    
+    # Database
+    "psycopg[binary,pool]",
+    "dj-database-url",
+    "django-redis",
+    
+    # AI Integration
+#    "llama-index",
+#    "openai",
+    
+    # Utilities
+    "python-dotenv>=1.0.0",
+    "django-axes",
+    "aiofiles",
+    "valkey",
+    "boto3",
+    "sentry_sdk",
+    "Pillow",
+]
+
+
+[tool.ruff.isort]
+required-imports = ["from __future__ import annotations"]
+
+exclude = [
+    "migrations",
+    ".venv",
+]
+
+[dependency-groups]
+dev = [
+     # Formatting & Linting
+    "black>=24.0",
+    "ruff>=0.2.0",
+    "pylint>=3.0.1",
+    "mypy",
+    
+    # Testing
+    "pytest>=8.0.0",
+    "pytest-asyncio>=0.23.0",
+    "pytest-django>=4.8.0",
+    "pytest-cov",
+    "anyio",
+    "pytest-tornasync",
+    "pytest-trio",
+    "pytest-twisted",
+    "pytest-mock",
+    "daphne",
+    
+    # Debugging
+    "django-debug-toolbar>=4.2.0",
+    "ipython>=8.12.0",
+    "pylint-django",
+    "django-stubs",
+    "django-types",
+    
+    # Documentation
+    "mkdocs>=1.5.0",
+    "mkdocs-material>=9.5.0",
+
+]
+
+[project.scripts]
+taskiq-worker = "api.tasks.broker:broker.cli"
+runserver = "uvicorn api.config.asgi:application --reload"
+
+
+
+[tool.black]
+line-length = 90
+[tool.ruff]
+select = ["ALL"]
+unfixable = ["T201"]
+ignore = [
+    "E501", # Line too long # Will be fixed by black
+    "A003",
+    "RUF001",
+    "ERA001",
+    "F841", # Local variable is assigned to but never used
+    "ANN101",
+    "ANN102", # Missing type annotation for `cls` in classmethod
+    "ANN401", # Dynamically typed expressions (typing.Any) are disallowed in `{name}`
+    "D10",
+    "D203",
+    "D213",
+    "EXE002",
+    "PD011",
+]
