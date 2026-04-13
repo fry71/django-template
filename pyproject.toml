@@ -79,15 +79,15 @@ exclude = [
 [dependency-groups]
 dev = [
      # Formatting & Linting
-    "black>=24.0",
-    "ruff>=0.2.0",
-    "pylint>=3.0.1",
+    "black>=26.3.1",
+    "ruff>=0.15.10",
+    "pylint>=4.0.5",
     "mypy",
     
     # Testing
-    "pytest>=8.0.0",
-    "pytest-asyncio>=0.23.0",
-    "pytest-django>=4.8.0",
+    "pytest>=9.0.3",
+    "pytest-asyncio>=1.3.0",
+    "pytest-django>=4.12.0",
     "pytest-cov",
     "anyio",
     "pytest-tornasync",
@@ -98,14 +98,14 @@ dev = [
     
     # Debugging
     "django-debug-toolbar>=4.2.0",
-    "ipython>=8.12.0",
+    "ipython>=9.12.0",
     "pylint-django",
     "django-stubs",
     "django-types",
     
     # Documentation
-    "mkdocs>=1.5.0",
-    "mkdocs-material>=9.5.0",
+    "mkdocs>=1.6.1",
+    "mkdocs-material>=9.7.6",
 
 ]
 
