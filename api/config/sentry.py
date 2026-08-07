@@ -3,9 +3,7 @@ from __future__ import annotations
 import logging
 from os import environ, getenv
 
-
 from sentry_sdk.integrations.django import DjangoIntegration
-
 
 from api.config.application import ENVIRONMENT
 

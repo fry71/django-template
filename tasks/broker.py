@@ -1,50 +1,53 @@
 # tasks/broker.py
+from __future__ import annotations
+
+import logging
 import os
+
 import django
 from django.conf import settings
-from taskiq_redis import RedisAsyncResultBackend, ListQueueBroker
 from taskiq import InMemoryBroker
-import logging
+from taskiq_redis import ListQueueBroker, RedisAsyncResultBackend
 
 logger = logging.getLogger(__name__)
 
 
-def create_broker():
-    """Create Taskiq broker."""
-    logger.info("Creating Taskiq broker")
+def create_broker() -> InMemoryBroker | ListQueueBroker:
+    """Create a Taskiq broker.
 
-    # Инициализация Django
+    In tests/dev with TASKIQ_IN_MEMORY=true, InMemoryBroker is used so
+    tasks are queued but not executed.
+    """
     os.environ.setdefault("DJANGO_SETTINGS_MODULE", "api.config.settings")
     try:
         django.setup()
-    except Exception as e:
-        logger.error(f"Failed to initialize Django: {e}")
+    except Exception:
+        logger.exception("Failed to initialize Django")
         raise
 
-    # Для разработки используем InMemoryBroker
-    # if settings.DEBUG:
-    #     logger.info("Using InMemoryBroker for development")
-    #     return InMemoryBroker()
+    if getattr(settings, "TASKIQ_IN_MEMORY", False):
+        logger.info("Using InMemoryBroker")
+        return InMemoryBroker()
 
-    # Для production используем Redis
-    redis_config = getattr(settings, "TASKIQ_REDIS", {})
-    redis_url = redis_config.get("URL", "redis://localhost:6379/3")
-
+    redis_url = getattr(settings, "TASKIQ_REDIS", {}).get(
+        "URL",
+        "redis://localhost:6379/3",
+    )
     if not redis_url:
-        logger.error("TASKIQ_REDIS.URL is not configured")
-        raise ValueError("TASKIQ_REDIS.URL is not configured")
+        msg = "TASKIQ_REDIS.URL is not configured"
+        logger.error(msg)
+        raise ValueError(msg)
 
     try:
         broker = ListQueueBroker(
             redis_url,
             queue_name="taskiq",
         ).with_result_backend(RedisAsyncResultBackend(redis_url))
-        logger.info("Redis broker created successfully")
-        return broker
-    except Exception as e:
-        logger.error(f"Failed to create Redis broker: {e}")
+    except Exception:
+        logger.exception("Failed to create Redis broker")
         raise
+    logger.info("Redis broker created successfully")
+    return broker
 
 
-# Создание брокера
 broker = create_broker()

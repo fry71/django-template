@@ -7,24 +7,23 @@ classifiers = [
     "Development Status :: 4 - Beta",
     "Environment :: Web Environment",
     "Framework :: Django",
-    "Framework :: Django :: 5.2",
+    "Framework :: Django :: 6.0",
     "Intended Audience :: Developers",
     "License :: OSI Approved :: MIT License",
     "Operating System :: OS Independent",
     "Programming Language :: Python",
-    "Programming Language :: Python :: 3.13",
+    "Programming Language :: Python :: 3.14",
     "Topic :: Internet :: WWW/HTTP",
     "Topic :: Internet :: WWW/HTTP :: Dynamic Content",
     "Topic :: Software Development :: Libraries :: Python Modules",
     ]
 readme = "README.md"
-requires-python = ">=3.13"
+requires-python = ">=3.14"
 tool.uv.package = true
-asyncio_mode = "auto"
-DJANGO_SETTINGS_MODULE = "api.config.settings"
 dependencies = [
     # Core
-    "django>=5.2",
+    "django>=6.0",
+    "pydantic>=2.12",
     "uvicorn[standard]",
     "uvicorn_worker",
     "django-cacheops",
@@ -68,22 +67,17 @@ dependencies = [
 ]
 
 
-[tool.ruff.isort]
+[tool.ruff.lint.isort]
 required-imports = ["from __future__ import annotations"]
 
-exclude = [
-    "migrations",
-    ".venv",
-]
 
 [dependency-groups]
 dev = [
-     # Formatting & Linting
+    # Formatting & Linting
     "black>=24.0",
     "ruff>=0.2.0",
     "pylint>=3.0.1",
     "mypy",
-    
     # Testing
     "pytest>=8.0.0",
     "pytest-asyncio>=0.23.0",
@@ -95,43 +89,107 @@ dev = [
     "pytest-twisted",
     "pytest-mock",
     "daphne",
-    
     # Debugging
     "django-debug-toolbar>=4.2.0",
     "ipython>=8.12.0",
     "pylint-django",
     "django-stubs",
     "django-types",
-    
     # Documentation
     "mkdocs>=1.5.0",
     "mkdocs-material>=9.5.0",
-
+    "types-aiofiles>=25.1.0.20260518",
 ]
 
 [project.scripts]
-taskiq-worker = "api.tasks.broker:broker.cli"
-runserver = "uvicorn api.config.asgi:application --reload"
+taskiq-worker = "tasks.broker:broker.cli"
+runserver = "uvicorn api.web.asgi:application --reload"
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+DJANGO_SETTINGS_MODULE = "api.config.settings"
 
 
 
 [tool.black]
 line-length = 90
+
+[tool.mypy]
+plugins = ["mypy_django_plugin.main"]
+python_version = "3.14"
+warn_unused_ignores = true
+
+[[tool.mypy.overrides]]
+module = [
+    "channels",
+    "channels.auth",
+    "channels.routing",
+    "channels.generic.websocket",
+    "storages.backends.s3",
+    "cacheops",
+    "axes.models",
+]
+ignore_missing_imports = true
+
+[tool.django-stubs]
+django_settings_module = "api.config.settings"
+strict_settings = false  # Settings are split across api/config/*.py modules
+
 [tool.ruff]
+exclude = [
+    "migrations",
+    ".venv",
+]
+
+[tool.ruff.lint]
 select = ["ALL"]
 unfixable = ["T201"]
 ignore = [
-    "E501", # Line too long # Will be fixed by black
+    # Line too long - formatted by black
+    "E501",
     "A003",
     "RUF001",
+    "RUF002",  # Russian docstrings trigger ambiguous-character warnings
     "ERA001",
-    "F841", # Local variable is assigned to but never used
-    "ANN101",
-    "ANN102", # Missing type annotation for `cls` in classmethod
-    "ANN401", # Dynamically typed expressions (typing.Any) are disallowed in `{name}`
+    "F841",  # Unused local variables
+    "ANN401",  # typing.Any in public signatures
     "D10",
     "D203",
     "D213",
     "EXE002",
     "PD011",
+    "CPY001",  # Copyright headers in a template are optional
+    "B008",  # django-ninja requires File(...) in defaults
+    "DJ001",  # null=True on string fields is intentional in this template
+    "S105",  # Placeholder JWT secret in config
+    "S106",  # Test passwords
+    "T201",  # print in utility scripts
+    "FIX002",  # TODOs are expected in a template
+    "TD002",  # TODO without author
+    "TD003",  # TODO without issue link
+    "RUF012",  # Mutable class defaults in Django admin (list_display, etc.)
+    "COM812",  # Trailing commas - controlled by black
 ]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/**" = [
+    "S101",  # assert is the pytest idiom
+    "PLR2004",  # Magic status codes in API tests
+    "ANN001",
+    "ANN002",
+    "ANN201",
+    "ARG001",
+    "ARG002",
+    "PLC0415",  # Imports inside fixtures/tasks
+    "E402",  # django.setup() after env vars in conftest
+    "CPY001",
+    "SLF001",  # Fake consumer internals in tests
+    "EM101",  # AssertionError string literals in tests
+    "TRY003",  # Same
+    "S108",  # /tmp test dir is intentional
+]
+"api/user/schema.py" = [
+    "TC003",  # datetime must be imported at runtime for pydantic model building
+]
+"main.py" = ["T201"]
+"**/api.py" = ["ARG001"]  # request is mandatory in django-ninja signatures

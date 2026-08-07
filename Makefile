@@ -1,11 +1,10 @@
 
 PYTHON = uv run python
-CELERY = uv run celery
 UVICORN = uv run uvicorn
 GUNICORN = uv run gunicorn
 TASKIQ = uv run taskiq
 
-# Запуск бота и сервера
+# Run bot and server
 run.bot:
 	$(PYTHON) -m bot
 
@@ -28,12 +27,12 @@ run.bot.prod:
 	$(PYTHON) -m bot
 
 run.taskiq.local:
-	DJANGO_SETTINGS_MODULE=api.config.settings $(TASKIQ) worker tasks:broker -fsd
+	DJANGO_SETTINGS_MODULE=api.config.settings $(TASKIQ) worker tasks.broker:broker 
 
 run.taskiq.prod:
-	$(TASKIQ) worker tasks:broker --worker 2 --fs-discover
+	$(TASKIQ) worker tasks.broker:broker --worker 2 
 
-# Управление Django
+# Django management
 makemigrations:
 	$(PYTHON) manage.py makemigrations
 
@@ -46,7 +45,7 @@ collectstatic:
 createsuperuser:
 	$(PYTHON) manage.py createsuperuser --email "" --username admin
 
-# Форматирование, линтинг и тесты
+# Formatting, linting, and tests
 fmt:
 	make -k ruff-fmt black
 

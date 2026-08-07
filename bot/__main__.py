@@ -23,7 +23,7 @@ dispatcher = Dispatcher()
 async def set_bot_commands() -> None:
     await bot.set_my_commands(
         [
-            BotCommand(command="/start", description="Для начала работы нажмите здесь"),
+            BotCommand(command="/start", description="Press here to get started"),
         ],
     )
 

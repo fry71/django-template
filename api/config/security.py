@@ -1,30 +1,29 @@
 from __future__ import annotations
 
 import logging
-import os
 from os import getenv
 
 logger = logging.getLogger(__name__)
 
-# Секретные ключи - обязательно измените в production!
-_default_secret_key = "your-super-secret-and-long-django-secret-key"  # noqa: S105
+# Secret keys — must be changed in production!
+_default_secret_key = "your-super-secret-and-long-django-secret-key"
 SECRET_KEY = getenv("DJANGO_SECRET_KEY", _default_secret_key)
 
 _default_jwt_secret_key = "your-super-secret-and-long-jwt-secret-key-for-token-signing"
 JWT_SECRET_KEY = getenv("JWT_SECRET_KEY", _default_jwt_secret_key)
 
-# Проверка на использование дефолтных ключей
+# Warn if default keys are in use
 if _default_secret_key == SECRET_KEY:
     logger.warning(
-        "You are using a default Django secret key - CHANGE THIS IN PRODUCTION!"
+        "You are using a default Django secret key - CHANGE THIS IN PRODUCTION!",
     )
 
 if _default_jwt_secret_key == JWT_SECRET_KEY:
     logger.warning("You are using a default JWT secret key - CHANGE THIS IN PRODUCTION!")
 
-# Безопасность - обязательно для production
+# JWT settings — required for production
 JWT_ALGORITHM = "HS256"
-JWT_ACCESS_TOKEN_LIFETIME = 60  # 5 минут
+JWT_ACCESS_TOKEN_LIFETIME = 60  # 5 minutes
 JWT_HEADER_PREFIX = "JWT"
 
 # SECURITY WARNING: don't run with debug turned on in production!

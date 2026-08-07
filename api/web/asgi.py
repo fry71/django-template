@@ -1,6 +1,10 @@
 # api/web/asgi.py
 from __future__ import annotations
+
+import mimetypes
 import os
+from pathlib import Path
+from typing import Any
 
 import aiofiles
 from channels.auth import AuthMiddlewareStack
@@ -8,7 +12,6 @@ from channels.routing import ProtocolTypeRouter, URLRouter
 from django.conf import settings
 from django.core.asgi import get_asgi_application
 from django.urls import path, re_path
-import mimetypes
 
 from api.web import routing
 
@@ -18,34 +21,34 @@ os.environ.setdefault("DJANGO_SETTINGS_MODULE", "api.config.settings")
 django_application = get_asgi_application()
 
 
-async def serve_media(scope, receive, send):
-    """Async function to serve media files"""
+async def serve_media(scope: dict[str, Any], receive: Any, send: Any) -> None:
+    """Async function to serve media files."""
     if scope["type"] != "http":
         return await django_application(scope, receive, send)
 
-    # Извлекаем путь из scope
+    # Extract path from scope
     path = scope["path"]
     if not path.startswith(settings.MEDIA_URL):
         return await django_application(scope, receive, send)
 
     file_path = path.replace(settings.MEDIA_URL, "", 1)
-    full_path = os.path.join(settings.MEDIA_ROOT, file_path)
+    full_path = Path(settings.MEDIA_ROOT) / file_path
 
-    if not os.path.exists(full_path) or not os.path.isfile(full_path):
+    if not full_path.exists() or not full_path.is_file():
         await send(
             {
                 "type": "http.response.start",
                 "status": 404,
                 "headers": [(b"Content-Type", b"text/plain")],
-            }
+            },
         )
         await send(
             {
                 "type": "http.response.body",
                 "body": b"File not found",
-            }
+            },
         )
-        return
+        return None
 
     content_type, _ = mimetypes.guess_type(full_path)
     content_type = content_type or "application/octet-stream"
@@ -53,21 +56,21 @@ async def serve_media(scope, receive, send):
     try:
         async with aiofiles.open(full_path, "rb") as f:
             content = await f.read()
-    except Exception as e:
+    except OSError:
         await send(
             {
                 "type": "http.response.start",
                 "status": 500,
                 "headers": [(b"Content-Type", b"text/plain")],
-            }
+            },
         )
         await send(
             {
                 "type": "http.response.body",
                 "body": b"Internal server error",
-            }
+            },
         )
-        return
+        return None
 
     await send(
         {
@@ -77,14 +80,15 @@ async def serve_media(scope, receive, send):
                 (b"Content-Type", content_type.encode("utf-8")),
                 (b"Content-Length", str(len(content)).encode("utf-8")),
             ],
-        }
+        },
     )
     await send(
         {
             "type": "http.response.body",
             "body": content,
-        }
+        },
     )
+    return None
 
 
 application = ProtocolTypeRouter(
@@ -93,8 +97,8 @@ application = ProtocolTypeRouter(
             [
                 path("media/<path:path>", serve_media),
                 re_path(r"", django_application),
-            ]
+            ],
         ),
         "websocket": AuthMiddlewareStack(URLRouter(routing.websocket_urlpatterns)),
-    }
+    },
 )

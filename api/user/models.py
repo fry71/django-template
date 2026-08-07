@@ -1,8 +1,9 @@
 # api/user/models.py
 from __future__ import annotations
+
+from django.conf import settings
 from django.contrib.auth.models import AbstractUser
 from django.db import models
-from django.conf import settings
 
 
 class User(AbstractUser):
@@ -18,14 +19,16 @@ class User(AbstractUser):
 
     @property
     def full_name(self) -> str:
-        """Returns user's full name"""
+        """Returns user's full name."""
         parts = [self.last_name, self.first_name, self.patronymic]
         return " ".join(part for part in parts if part) or self.username
 
 
 class Message(models.Model):
     sender = models.ForeignKey(
-        settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name="sent_messages"
+        settings.AUTH_USER_MODEL,
+        on_delete=models.CASCADE,
+        related_name="sent_messages",
     )
     content = models.TextField()
     timestamp = models.DateTimeField(auto_now_add=True)
@@ -41,7 +44,9 @@ class Message(models.Model):
 
 class Photo(models.Model):
     user = models.ForeignKey(
-        settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name="photos"
+        settings.AUTH_USER_MODEL,
+        on_delete=models.CASCADE,
+        related_name="photos",
     )
     image = models.ImageField(upload_to="photos/")
     uploaded_at = models.DateTimeField(auto_now_add=True)

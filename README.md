@@ -2,8 +2,8 @@
 
 A production-ready template project showcasing the integration of modern web development technologies with Django, providing performance comparable to FastAPI while maintaining all Django benefits.
 
-[![Python Version](https://img.shields.io/badge/python-3.13-blue.svg)](https://www.python.org/downloads/)
-[![Django Version](https://img.shields.io/badge/django-5.2-green.svg)](https://www.djangoproject.com/)
+[![Python Version](https://img.shields.io/badge/python-3.14-blue.svg)](https://www.python.org/downloads/)
+[![Django Version](https://img.shields.io/badge/django-6.0-green.svg)](https://www.djangoproject.com/)
 [![License](https://img.shields.io/badge/license-MIT-blue.svg)](https://opensource.org/licenses/MIT)
 
 ## Features
@@ -20,14 +20,15 @@ A production-ready template project showcasing the integration of modern web dev
 
 
 ## Technologies
-- [Django 5.2](https://www.djangoproject.com/) - High-level Python web framework
+- [Django 6.0](https://www.djangoproject.com/) - High-level Python web framework
+- [Python 3.14](https://www.python.org/) - Modern Python runtime
 - [Django Ninja](https://django-ninja.rest-framework.com/) - Fast Django REST API framework
+- [Pydantic v2](https://docs.pydantic.dev/) - Data validation with strict typing
 - [Taskiq](https://taskiq-python.github.io/) - Modern task queue (Celery alternative)
 - [Valkey](https://valkey.io/) - Redis-compatible datastore
 - [Sentry](https://sentry.io/) - Error monitoring and performance tracking
 - [Django Channels](https://channels.readthedocs.io/) - WebSocket and async support
 - [WebSockets](https://developer.mozilla.org/en-US/docs/Web/API/WebSockets_API) - Real-time communication
-- [Hotwire Turbo](https://turbo.hotwired.dev/) - Dynamic page updates without JavaScript
 
 ## Quick Start
 

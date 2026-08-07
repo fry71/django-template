@@ -20,7 +20,7 @@ MEDIA_ROOT = BASE_DIR / "media"
 MEDIA_URL = "media/"
 
 STATICFILES_DIRS = [
-    BASE_DIR / "staticfiles" / "css",  # Например, ./static/ в корне проекта
+    BASE_DIR / "staticfiles" / "css",  # e.g. ./static/ at project root
     BASE_DIR / "staticfiles" / "js",
     BASE_DIR / "staticfiles" / "turbo" / "js",
     BASE_DIR / "staticfiles" / "silk",
@@ -83,7 +83,7 @@ class CustomDomainS3Storage(S3Storage):
         http_method: Any = None,
     ) -> str:
         """Replace internal domain with custom domain for signed URLs."""
-        url = cast(str, super().url(name, parameters, expire, http_method))
+        url = cast("str", super().url(name, parameters, expire, http_method))
 
         return url.replace(
             f"https://{AWS_STORAGE_BUCKET_NAME}.s3.amazonaws.com",

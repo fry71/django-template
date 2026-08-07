@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from os import getenv
+
 from api.config.base import BASE_DIR
 from api.config.silk import SILKY_MIDDLEWARE_CLASS, USE_SILK
 

@@ -1,22 +1,25 @@
 # Copyright (c) 2025 Fedorov Dmitry
 # Licensed under the MIT License. See LICENSE file in the project root for details.
 
-from channels.generic.websocket import AsyncWebsocketConsumer
+from __future__ import annotations
+
 import json
-import jwt
-from django.conf import settings
-from asgiref.sync import sync_to_async
-from .models import User, Message
 import logging
+
+import jwt
+from channels.generic.websocket import AsyncWebsocketConsumer
+from django.conf import settings
+
+from .models import Message, User
 
 logger = logging.getLogger(__name__)
 
 
 class ChatConsumer(AsyncWebsocketConsumer):
-    """WebSocket consumer for real-time chat functionality"""
+    """WebSocket consumer for real-time chat functionality."""
 
-    async def connect(self):
-        """Handle new WebSocket connection"""
+    async def connect(self) -> None:
+        """Handle new WebSocket connection."""
         logger.info("WebSocket connecting...")
 
         # Extract token from URL
@@ -26,12 +29,14 @@ class ChatConsumer(AsyncWebsocketConsumer):
             await self.close()
             return
 
-        logger.info(f"WebSocket connected with token: {token}")
+        logger.info("WebSocket connected with token: %s", token)
 
         try:
             # Decode JWT token
             payload = jwt.decode(
-                token, settings.JWT_SECRET_KEY, algorithms=[settings.JWT_ALGORITHM]
+                token,
+                settings.JWT_SECRET_KEY,
+                algorithms=[settings.JWT_ALGORITHM],
             )
             user_id = payload["user_id"]
 
@@ -43,30 +48,30 @@ class ChatConsumer(AsyncWebsocketConsumer):
             await self.channel_layer.group_add(self.group_name, self.channel_name)
             await self.accept()
 
-            logger.info(f"User {self.user.username} connected to chat")
+            logger.info("User %s connected to chat", self.user.username)
 
         except jwt.InvalidTokenError:
-            logger.error("Invalid JWT token")
+            logger.exception("Invalid JWT token")
             await self.close()
         except User.DoesNotExist:
-            logger.error("User not found")
+            logger.exception("User not found")
             await self.close()
-        except Exception as e:
-            logger.error(f"Error during connection: {e}")
+        except Exception:
+            logger.exception("Error during connection")
             await self.close()
 
-    async def disconnect(self, close_code):
-        """Handle WebSocket disconnection"""
-        logger.info(f"WebSocket disconnected with code: {close_code}")
+    async def disconnect(self, close_code: int | None) -> None:
+        """Handle WebSocket disconnection."""
+        logger.info("WebSocket disconnected with code: %s", close_code)
 
         if hasattr(self, "group_name"):
             await self.channel_layer.group_discard(self.group_name, self.channel_name)
 
         if hasattr(self, "user"):
-            logger.info(f"User {self.user.username} disconnected from chat")
+            logger.info("User %s disconnected from chat", self.user.username)
 
-    async def receive(self, text_data):
-        """Handle incoming WebSocket messages"""
+    async def receive(self, text_data: str | None) -> None:
+        """Handle incoming WebSocket messages."""
         if not hasattr(self, "group_name"):
             logger.warning("Received message before connection established")
             return
@@ -94,17 +99,17 @@ class ChatConsumer(AsyncWebsocketConsumer):
                     },
                 )
 
-                logger.info(f"Message sent by {self.user.username}: {content}")
+                logger.info("Message sent by %s: %s", self.user.username, content)
             else:
                 logger.warning("Received empty message content")
 
         except json.JSONDecodeError:
-            logger.error("Invalid JSON received")
-        except Exception as e:
-            logger.error(f"Error processing message: {e}")
+            logger.exception("Invalid JSON received")
+        except Exception:
+            logger.exception("Error processing message")
 
-    async def chat_message(self, event):
-        """Handle chat messages from channel layer"""
+    async def chat_message(self, event: dict) -> None:
+        """Handle chat messages from channel layer."""
         message = event["message"]
 
         try:
@@ -114,8 +119,8 @@ class ChatConsumer(AsyncWebsocketConsumer):
                         "content": message["content"],
                         "timestamp": message["timestamp"],
                         "username": message["username"],
-                    }
-                )
+                    },
+                ),
             )
-        except Exception as e:
-            logger.error(f"Error sending message to client: {e}")
+        except Exception:
+            logger.exception("Error sending message to client")

@@ -7,13 +7,13 @@ from django.conf.urls.static import static
 from django.contrib import admin
 from django.shortcuts import redirect
 from django.urls import include, path
-from api.web.routing import websocket_urlpatterns, api
+
 from api.config.silk import USE_SILK
 from api.config.storage import (
     USE_S3_FOR_MEDIA,
     USE_S3_FOR_STATIC,
 )
-from api.web.routing import api
+from api.web.routing import api, websocket_urlpatterns
 
 logger = logging.getLogger(__name__)
 

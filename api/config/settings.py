@@ -14,4 +14,5 @@ include(
     "silk.py",
     "cache.py",
     "axes.py",
+    "taskiq.py",
 )

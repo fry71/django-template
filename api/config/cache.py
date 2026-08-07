@@ -4,7 +4,6 @@ import logging
 from os import getenv
 from typing import Any
 
-
 from django.core.cache import cache
 from redis.exceptions import RedisError
 
@@ -45,7 +44,7 @@ if USE_REDIS_FOR_CACHE:
         cacheops.get("ping")
         cacheops.delete("ping")
         logger.info("Cacheops is working properly")
-    except (ValueError, RedisError):
+    except ValueError, RedisError:
         logger.exception("Cacheops is not working. ")
 
     # Ping the cache to see if it's working
@@ -58,7 +57,7 @@ if USE_REDIS_FOR_CACHE:
 
         cache.delete("ping")
         logger.info("Cache is working properly")
-    except (ValueError, RedisError):
+    except ValueError, RedisError:
         logger.exception("Cache is not working. Using dummy cache instead")
         CACHES["default"] = {
             "BACKEND": "django.core.cache.backends.dummy.DummyCache",

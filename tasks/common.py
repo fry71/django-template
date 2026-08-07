@@ -1,38 +1,48 @@
 # tasks/common.py
 from __future__ import annotations
+
+import asyncio
 import logging
-from django.core.mail import send_mail
-from asgiref.sync import sync_to_async, async_to_sync
-from django.contrib.auth import get_user_model
-from django.conf import settings
-from taskiq import TaskiqDepends
+from typing import TYPE_CHECKING, Any
 
+from tasks.broker import broker
 
-def get_broker():
-    from .broker import broker
-
-    return broker
-
-
-User = get_user_model()
+if TYPE_CHECKING:
+    from collections.abc import Callable
 
 logger = logging.getLogger(__name__)
 
 
-@get_broker().task
-async def send_verification_email(email: str, code: str):
-    try:
-        if settings.DEBUG:
-            logger.info(f"Sending verification email to {email} with code {code}")
-        else:
-            logger.info(f"Sending verification email to {email}")
-        return True
-        # await sync_to_async(send_mail, thread_sensitive=True)(
-        #     subject="Vrification",
-        #     message=f"Your verification code is {code}",
-        #     from_email=settings.EMAIL_HOST_USER,
-        #     recipient_list=[email],
-        #     fail_silently=False,
-        # )
-    except Exception as e:
-        logger.error(f"Error sending verification email: {e}")
+def get_broker() -> Any:
+    """DI provider for the Taskiq broker (TaskiqDepends)."""
+    return broker
+
+
+async def retry_with_backoff(
+    func: Callable[..., Any],
+    *,
+    max_retries: int = 3,
+    base_delay: float = 1.0,
+    **kwargs: Any,
+) -> Any:
+    """Run a function with exponential backoff for transient errors.
+
+    Permanent errors are re-raised immediately; transient ones retry 3 times.
+    """
+    for attempt in range(max_retries):
+        try:
+            return await func(**kwargs)
+        except Exception as exc:
+            if attempt == max_retries - 1:
+                raise
+            delay = base_delay * (2**attempt)
+            logger.warning(
+                "Transient error (attempt %d/%d): %s. Retrying in %.1fs",
+                attempt + 1,
+                max_retries,
+                exc,
+                delay,
+            )
+            await asyncio.sleep(delay)
+    msg = "Unreachable"
+    raise RuntimeError(msg)  # pragma: no cover

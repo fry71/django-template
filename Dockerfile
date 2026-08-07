@@ -1,5 +1,5 @@
 # Dockerfile
-FROM python:3.13-slim AS builder
+FROM python:3.14-slim AS builder
 
 WORKDIR /application
 
@@ -19,7 +19,7 @@ COPY uv.lock .
 # Установка зависимостей
 RUN uv sync --frozen
 
-FROM python:3.13-slim
+FROM python:3.14-slim
 
 WORKDIR /application
 

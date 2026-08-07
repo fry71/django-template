@@ -1,36 +1,38 @@
 # api/user/api.py
 from __future__ import annotations
-from datetime import datetime, timedelta, timezone
+
 import logging
-from typing import Optional
-import re
+from datetime import UTC, datetime, timedelta
+from typing import TYPE_CHECKING
 
-from asgiref.sync import sync_to_async
-from django.conf import settings
-from django.contrib.auth import aauthenticate
-from django.contrib.auth.password_validation import validate_password
-from django.core.exceptions import ValidationError
-from django.core.paginator import Paginator
-from django.http import HttpRequest
 import jwt
-from ninja import Query, Router, UploadedFile, File
+from django.conf import settings
+from ninja import File, Router, UploadedFile
+from ninja.pagination import PageNumberPagination, paginate
 from ninja.security import HttpBearer
-from typing import List
 
-from .models import Message, User, Photo
-from .schema import (
-    UserTokenSchema,
-    UserLoginSchema,
-    UserSchema,
-    UserCreateSchema,
-    UserUpdateSchema,
-    PaginatedUsersOut,
-    PaginatedMessagesOut,
-    MessageSchema,
-    MessageInSchema,
-    PhotoSchema,
-    ErrorSchema,
+from api.common.exceptions import (
+    NotFoundError,
+    PermissionDeniedError,
 )
+from api.common.schemas import ErrorSchema, OperationResultSchema
+from api.user.schema import (
+    MessageIn,
+    MessageOut,
+    PhotoOut,
+    UserCreateIn,
+    UserLoginIn,
+    UserOutSchema,
+    UserTokenOut,
+    UserUpdateIn,
+)
+from api.user.services import message_service, photo_service, user_service
+
+if TYPE_CHECKING:
+    from django.db.models import QuerySet
+    from django.http import HttpRequest
+
+    from api.user.models import Message, Photo, User
 
 logger = logging.getLogger(__name__)
 
@@ -38,251 +40,236 @@ router = Router()
 
 
 class JWTAuth(HttpBearer):
-    async def authenticate(self, request: HttpRequest, token: str) -> Optional[User]:
+    """JWT authentication via HttpBearer."""
+
+    async def authenticate(self, request: HttpRequest, token: str) -> User | None:
         try:
             payload = jwt.decode(
-                token, settings.JWT_SECRET_KEY, algorithms=[settings.JWT_ALGORITHM]
+                token,
+                settings.JWT_SECRET_KEY,
+                algorithms=[settings.JWT_ALGORITHM],
             )
-            user_id = payload.get("user_id")
-            if not user_id:
-                return None
-            user = await User.objects.aget(id=user_id)
-            request.user = user
-            return user
-        except (jwt.InvalidTokenError, User.DoesNotExist) as e:
-            logger.error(f"JWT Error: {e}")
+        except jwt.InvalidTokenError as exc:
+            logger.warning("JWT invalid: %s", exc)
+            return None
+        except Exception:
+            logger.exception("JWT authenticate unexpected error")
             return None
 
+        user_id = payload.get("user_id")
+        if not user_id:
+            logger.warning("JWT missing user_id: %s", payload)
+            return None
+        user = await user_service.get_user(user_id)
+        if user is None:
+            logger.warning("JWT user %s not found", user_id)
+            return None
+        request.user = user
+        return user
 
-def validate_email(email: str) -> bool:
-    pattern = r"^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$"
-    return re.match(pattern, email) is not None
 
-
-@router.post("/token", response={200: UserTokenSchema, 401: ErrorSchema})
-async def get_token(request, payload: UserLoginSchema):
-    logger.debug(f"Login attempt: {payload}")
-    user = await aauthenticate(username=payload.username, password=payload.password)
-    if not user:
+@router.post("/token", response={200: UserTokenOut, 401: ErrorSchema})
+async def get_token(
+    request: HttpRequest,
+    payload: UserLoginIn,
+) -> tuple[int, dict[str, str]]:
+    """Issue a JWT token for username/password."""
+    user = await user_service.authenticate(payload.username, payload.password)
+    if user is None:
         return 401, {"detail": "Invalid credentials"}
 
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     token_payload = {
         "user_id": user.id,
         "username": user.username,
         "exp": int(
-            (now + timedelta(minutes=settings.JWT_ACCESS_TOKEN_LIFETIME)).timestamp()
+            (now + timedelta(minutes=settings.JWT_ACCESS_TOKEN_LIFETIME)).timestamp(),
         ),
         "iat": int(now.timestamp()),
     }
     token = jwt.encode(
-        token_payload, settings.JWT_SECRET_KEY, algorithm=settings.JWT_ALGORITHM
+        token_payload,
+        settings.JWT_SECRET_KEY,
+        algorithm=settings.JWT_ALGORITHM,
     )
-    return {"access_token": token, "token_type": "Bearer"}
+    return 200, {"access_token": token, "token_type": "Bearer"}
 
 
-@router.get("/me", response=UserSchema, auth=JWTAuth())
-async def get_me(request):
+@router.get("/me", response=UserOutSchema, auth=JWTAuth())
+async def get_me(request: HttpRequest) -> User:
+    """Current authenticated user."""
     return request.user
 
 
-@router.get("/users", response=PaginatedUsersOut, auth=JWTAuth())
-async def get_users(
-    request,
-    page: int = Query(1, ge=1),
-    per_page: int = Query(10, ge=1, le=100),
-):
-    users_qs = User.objects.all().order_by("-id")
-    users_list = await sync_to_async(list)(users_qs)
-    paginator = Paginator(users_list, per_page)
-    page_obj = paginator.get_page(page)
-    results = [user for user in page_obj.object_list]
-
-    return {
-        "count": paginator.count,
-        "results": results,
-    }
+@router.get(
+    "/users",
+    response=list[UserOutSchema],
+    auth=JWTAuth(),
+    by_alias=False,
+)
+@paginate(PageNumberPagination)
+async def get_users(request: HttpRequest) -> QuerySet[User]:
+    """Paginated user list via django-ninja."""
+    return user_service.user_queryset()
 
 
-@router.post("/users", response={201: UserSchema, 400: ErrorSchema})
-async def create_user(request, payload: UserCreateSchema):
-    try:
-        if not validate_email(payload.email):
-            return 400, {"detail": "Invalid email format"}
-
-        validate_password(payload.password)
-
-        try:
-            await User.objects.aget(email=payload.email)
-            return 400, {"detail": "Email already exists"}
-        except User.DoesNotExist:
-            pass
-
-        user = await User.objects.acreate_user(
-            username=payload.username,
-            email=payload.email,
-            password=payload.password,
-            first_name=payload.first_name,
-            last_name=payload.last_name,
-            patronymic=payload.patronymic,
-        )
-        return 201, user
-    except ValidationError as e:
-        return 400, {"detail": "; ".join(e.messages)}
-    except Exception as e:
-        return 400, {"detail": str(e)}
+@router.post(
+    "/users",
+    response={201: UserOutSchema, 400: ErrorSchema, 401: ErrorSchema, 409: ErrorSchema},
+)
+async def create_user(request: HttpRequest, payload: UserCreateIn) -> tuple[int, User]:
+    """Create a new user."""
+    user = await user_service.create_user(payload)
+    return 201, user
 
 
 @router.get(
     "/users/{user_id}",
-    response={200: UserSchema, 404: ErrorSchema},
+    response={200: UserOutSchema, 401: ErrorSchema, 404: ErrorSchema},
     auth=JWTAuth(),
 )
-async def get_user(request, user_id: int):
-    try:
-        user = await User.objects.aget(id=user_id)
-        return user
-    except User.DoesNotExist:
-        return 404, {"detail": "User not found"}
+async def get_user(request: HttpRequest, user_id: int) -> tuple[int, User | ErrorSchema]:
+    """Get user by id."""
+    user = await user_service.get_user(user_id)
+    if user is None:
+        msg = "User not found"
+        raise NotFoundError(msg)
+    return 200, user
 
 
 @router.put(
     "/users/{user_id}",
-    response={200: UserSchema, 404: ErrorSchema},
+    response={
+        200: UserOutSchema,
+        400: ErrorSchema,
+        401: ErrorSchema,
+        403: ErrorSchema,
+        404: ErrorSchema,
+    },
     auth=JWTAuth(),
 )
-async def update_user(request, user_id: int, payload: UserUpdateSchema):
+async def update_user(
+    request: HttpRequest,
+    user_id: int,
+    payload: UserUpdateIn,
+) -> tuple[int, User | ErrorSchema]:
+    """Partial user update."""
     if request.user.id != user_id and not request.user.is_staff:
-        return 403, {"detail": "No permission to edit"}
+        msg = "No permission to edit"
+        raise PermissionDeniedError(msg)
 
-    try:
-        user = await User.objects.aget(id=user_id)
-        update_data = payload.model_dump(exclude_unset=True)
-
-        if "email" in update_data and update_data["email"]:
-            if not validate_email(update_data["email"]):
-                return 400, {"detail": "Invalid email format"}
-
-            try:
-                existing_user = await User.objects.exclude(id=user_id).aget(
-                    email=update_data["email"]
-                )
-                return 400, {"detail": "Email already exists"}
-            except User.DoesNotExist:
-                pass
-
-        for key, value in update_data.items():
-            setattr(user, key, value)
-        await user.asave()
-        return user
-    except User.DoesNotExist:
-        return 404, {"detail": "User not found"}
+    user = await user_service.update_user(user_id, payload)
+    if user is None:
+        msg = "User not found"
+        raise NotFoundError(msg)
+    return 200, user
 
 
-@router.delete("/users/{user_id}", response={204: None, 404: ErrorSchema}, auth=JWTAuth())
-async def delete_user(request, user_id: int):
+@router.delete(
+    "/users/{user_id}",
+    response={204: None, 401: ErrorSchema, 403: ErrorSchema, 404: ErrorSchema},
+    auth=JWTAuth(),
+)
+async def delete_user(request: HttpRequest, user_id: int) -> tuple[int, None]:
+    """Delete a user."""
     if request.user.id != user_id and not request.user.is_staff:
-        return 403, {"detail": "No permission to delete"}
+        msg = "No permission to delete"
+        raise PermissionDeniedError(msg)
 
-    try:
-        user = await User.objects.aget(id=user_id)
-        await user.adelete()
-        return 204, None
-    except User.DoesNotExist:
-        return 404, {"detail": "User not found"}
+    deleted = await user_service.delete_user(user_id)
+    if not deleted:
+        msg = "User not found"
+        raise NotFoundError(msg)
+    return 204, None
 
 
-@router.get("/messages", response=PaginatedMessagesOut, auth=JWTAuth())
+@router.get(
+    "/messages",
+    response=list[MessageOut],
+    auth=JWTAuth(),
+    by_alias=False,
+)
+@paginate(PageNumberPagination)
 async def get_messages(
-    request,
-    search: Optional[str] = None,
-    sort: Optional[str] = "-id",
-    page: int = Query(1, ge=1),
-    per_page: int = Query(10, ge=1, le=100),
-):
-    messages_qs = Message.objects.select_related("sender").all().order_by(sort or "-id")
-    messages_list = await sync_to_async(list)(messages_qs)
-
-    if search:
-        messages_list = [m for m in messages_list if search.lower() in m.content.lower()]
-
-    paginator = Paginator(messages_list, per_page)
-    page_obj = paginator.get_page(page)
-
-    results = [
-        MessageSchema(
-            id=message.id,
-            content=message.content,
-            timestamp=message.timestamp,
-            sender=message.sender.username,
-        )
-        for message in page_obj.object_list
-    ]
-
-    return {
-        "count": paginator.count,
-        "search": search,
-        "sort": sort,
-        "results": results,
-    }
+    request: HttpRequest,
+    search: str | None = None,
+    sort: str | None = None,
+) -> QuerySet[Message]:
+    """Paginated message list with search."""
+    return message_service.message_queryset(search=search, sort=sort)
 
 
 @router.post(
     "/messages",
-    response={201: MessageSchema, 400: ErrorSchema},
+    response={201: MessageOut, 400: ErrorSchema, 401: ErrorSchema},
     auth=JWTAuth(),
 )
-async def create_message(request, payload: MessageInSchema):
-    try:
-        message = await Message.objects.acreate(
-            sender=request.user, content=payload.content
-        )
-        return 201, MessageSchema(
-            id=message.id,
-            content=message.content,
-            timestamp=message.timestamp,
-            sender=message.sender.username,
-        )
-    except Exception as e:
-        return 400, {"detail": str(e)}
+async def create_message(
+    request: HttpRequest,
+    payload: MessageIn,
+) -> tuple[int, MessageOut]:
+    """Create a message."""
+    message = await message_service.create_message(request.user.id, payload.content)
+    return 201, MessageOut(
+        id=message.id,
+        content=message.content,
+        timestamp=message.timestamp,
+        sender=request.user.username,
+    )
 
 
 @router.delete(
     "/messages/{message_id}",
-    response={204: None, 404: ErrorSchema},
+    response={
+        200: OperationResultSchema,
+        401: ErrorSchema,
+        403: ErrorSchema,
+        404: ErrorSchema,
+    },
     auth=JWTAuth(),
 )
-async def delete_message(request, message_id: int):
-    try:
-        message = await Message.objects.aget(id=message_id)
-        if message.sender != request.user and not request.user.is_staff:
-            return 403, {"detail": "No permission to delete message"}
-        await message.adelete()
-        return 204, None
-    except Message.DoesNotExist:
-        return 404, {"detail": "Message not found"}
+async def delete_message(
+    request: HttpRequest,
+    message_id: int,
+) -> tuple[int, dict[str, str]]:
+    """Delete a message."""
+    message = await message_service.get_message(message_id)
+    if message is None:
+        msg = "Message not found"
+        raise NotFoundError(msg)
+    if message.sender_id != request.user.id and not request.user.is_staff:
+        msg = "No permission to delete message"
+        raise PermissionDeniedError(msg)
+
+    await message_service.delete_message(message_id)
+    return 200, {"detail": "Message deleted"}
 
 
-@router.get("/photos", response=List[PhotoSchema], auth=JWTAuth())
-async def get_photos(request):
-    photos = await sync_to_async(list)(Photo.objects.filter(user=request.user).all())
-    return photos
+@router.get(
+    "/photos",
+    response=list[PhotoOut],
+    auth=JWTAuth(),
+    by_alias=False,
+)
+@paginate(PageNumberPagination)
+async def get_photos(request: HttpRequest) -> QuerySet[Photo]:
+    """List photos for the current user."""
+    return photo_service.photo_queryset(request.user.id)
 
 
-@router.post("/photos", response={201: PhotoSchema, 400: ErrorSchema}, auth=JWTAuth())
-async def create_photo(request, file: UploadedFile = File(...)):
-    try:
-        # Validate file type
-        if not file.content_type.startswith("image/"):
-            return 400, {"detail": "Only image files are allowed"}
-
-        # Validate file size (5MB limit)
-        if file.size > 5 * 1024 * 1024:
-            return 400, {"detail": "File size must not exceed 5MB"}
-
-        # Save file and create photo record
-        photo = await Photo.objects.acreate(user=request.user, image=file)
-        return 201, photo
-    except Exception as e:
-        logger.error(f"Error creating photo: {e}")
-        return 400, {"detail": str(e)}
+@router.post(
+    "/photos",
+    response={201: PhotoOut, 400: ErrorSchema, 401: ErrorSchema},
+    auth=JWTAuth(),
+)
+async def create_photo(
+    request: HttpRequest,
+    file: UploadedFile = File(...),
+) -> tuple[int, PhotoOut]:
+    """Upload a photo."""
+    photo = await photo_service.create_photo(request.user.id, file)
+    return 201, PhotoOut(
+        id=photo.id,
+        image=photo.image.url if photo.image else "",
+        user_id=photo.user_id,
+    )

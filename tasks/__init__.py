@@ -1,48 +1,36 @@
 # tasks/__init__.py
+from __future__ import annotations
+
+import logging
 import os
 from importlib import import_module
+
+import django
 from django.apps import apps
+
 from .broker import broker
-from . import common
-from django.conf import settings
-import logging
 
 logger = logging.getLogger(__name__)
 
-__all__ = ["broker", "common"]
+__all__ = ["broker"]
 
 
-# Registration tasks from apps
-def register_tasks():
-    """Register tasks from all Django apps."""
+def register_tasks() -> None:
+    """Register tasks from all Django apps (tasks.py in each app)."""
     for app_config in apps.get_app_configs():
         try:
-            tasks_module = f"{app_config.name}.tasks"
-            import_module(tasks_module)
-            logger.info(f"Tasks module loaded: {tasks_module}")
+            import_module(f"{app_config.name}.tasks")
         except ImportError:
             continue
 
-    # Загружаем тестовые задачи
-    try:
-        import_module("tasks.test_tasks")
-        logger.info("Test tasks loaded")
-    except ImportError as e:
-        logger.warning(f"Could not load test tasks: {e}")
+    import_module("tasks.test_tasks")
 
 
-# Инициализация Django и регистрация задач
 os.environ.setdefault("DJANGO_SETTINGS_MODULE", "api.config.settings")
 
 try:
-    import django
-
     django.setup()
     register_tasks()
-except Exception as e:
-    logger.error(f"Failed to initialize tasks: {e}")
-
-if settings.DEBUG:
-    logger.info("Registered tasks:")
-    for name in broker.get_all_tasks():
-        logger.info(f"- {name}")
+    logger.info("Registered %d tasks", len(broker.get_all_tasks()))
+except Exception:
+    logger.exception("Failed to initialize tasks")

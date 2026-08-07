@@ -1,34 +1,34 @@
 # Production Deployment Guide
 
-## 🚀 Быстрый старт для Production
+## 🚀 Quick start for Production
 
-### 1. Настройка переменных окружения
+### 1. Environment variables
 
 ```bash
-# Копируем файл с переменными
+# Copy the example env file
 cp .env.example .env
 
-# ОБЯЗАТЕЛЬНО измените эти ключи!
+# MUST change these keys!
 DJANGO_SECRET_KEY=your-super-secure-django-secret-key-256-chars
 JWT_SECRET_KEY=your-super-secure-jwt-secret-key-256-chars
 ```
 
-### 2. Безопасность Production
+### 2. Production security
 
 ```bash
-# Включаем все security настройки
+# Enable all security settings
 SECURE_SSL_REDIRECT=true
 SESSION_COOKIE_SECURE=true
 CSRF_COOKIE_SECURE=true
-SECURE_HSTS_SECONDS=31536000  # 1 год
+SECURE_HSTS_SECONDS=31536000  # 1 year
 SECURE_HSTS_INCLUDE_SUBDOMAINS=true
 SECURE_HSTS_PRELOAD=true
 ```
 
-### 3. База данных с SSL
+### 3. Database with SSL
 
 ```bash
-# Для production используйте PostgreSQL с SSL
+# For production, use PostgreSQL with SSL
 DB_SSL_MODE=require
 DB_SSL_CA=/path/to/ca-cert.pem
 DB_SSL_CERT=/path/to/client-cert.pem
@@ -36,27 +36,27 @@ DB_SSL_KEY=/path/to/client-key.pem
 DATABASE_URL=postgresql://user:pass@host:5432/dbname?sslmode=require
 ```
 
-### 4. Запуск в Production
+### 4. Running in Production
 
 ```bash
-# Установка зависимостей
+# Install dependencies
 uv sync
 
-# Миграции
+# Migrations
 make migrate
 
-# Создание суперпользователя
-migrate createsuperuser
+# Create a superuser
+make createsuperuser
 
-# Запуск с Gunicorn
-migrate run.server.prod
+# Run with Gunicorn
+make run.server.prod
 ```
 
-## 🔒 Критические настройки безопасности
+## 🔒 Critical security settings
 
 ### SSL/HTTPS
 ```bash
-# Обязательно для production!
+# Required for production!
 SECURE_SSL_REDIRECT=true
 SECURE_HSTS_SECONDS=31536000
 SECURE_HSTS_INCLUDE_SUBDOMAINS=true
@@ -67,12 +67,12 @@ CSRF_COOKIE_SECURE=true
 
 ### Content Security Policy
 ```python
-# В settings.py добавьте
+# Add to settings.py
 MIDDLEWARE += [
     'django.middleware.security.SecurityMiddleware',
 ]
 
-# CSP настройки
+# CSP settings
 SECURE_CONTENT_TYPE_NOSNIFF = True
 SECURE_BROWSER_XSS_FILTER = True
 X_FRAME_OPTIONS = 'DENY'
@@ -85,30 +85,30 @@ AXES_FAILURE_LIMIT=5
 AXES_COOLOFF_TIME=1  # hour
 ```
 
-## 📊 Мониторинг и логирование
+## 📊 Monitoring and logging
 
-### Sentry (ошибки)
+### Sentry (errors)
 ```bash
 USE_SENTRY=true
 SENTRY_DSN=your-sentry-dsn
 ```
 
-### Логирование
+### Logging
 ```bash
 LOG_LEVEL=INFO
 LOG_FILE=/var/log/app.log
 ```
 
-### Мониторинг производительности
+### Performance monitoring
 ```bash
-USE_SILK=true  # Включить Django Silk для профилирования
+USE_SILK=true  # Enable Django Silk for profiling
 ```
 
-## 🗄️ Настройка базы данных
+## 🗄️ Database setup
 
-### PostgreSQL конфигурация
+### PostgreSQL configuration
 ```python
-# В database.py уже настроено:
+# Already configured in database.py:
 DATABASES = {
     "default": {
         "ENGINE": "django.db.backends.postgresql",
@@ -121,9 +121,9 @@ DATABASES = {
 }
 ```
 
-### Оптимизация производительности
+### Performance tuning
 ```sql
--- Настройки PostgreSQL для production
+-- PostgreSQL settings for production
 shared_buffers = 256MB
 effective_cache_size = 1GB
 maintenance_work_mem = 64MB
@@ -132,7 +132,7 @@ work_mem = 4MB
 
 ## 🔄 CI/CD Pipeline
 
-### GitHub Actions пример
+### GitHub Actions example
 ```yaml
 name: Django CI
 
@@ -174,11 +174,11 @@ jobs:
         python manage.py check --deploy
 ```
 
-## 📈 Масштабирование
+## 📈 Scaling
 
-### Horizontal scaling (несколько серверов)
+### Horizontal scaling (multiple servers)
 ```bash
-# Используйте общую базу данных и Redis
+# Use a shared database and Redis
 REDIS_HOST=shared-redis-host
 DATABASE_URL=postgresql://user:pass@shared-db:5432/dbname
 ```
@@ -207,43 +207,42 @@ server {
 
 ## 🛠️ Troubleshooting
 
-### Проверка безопасности
+### Security checks
 ```bash
-# Запустите Django check с production флагами
+# Run Django check with production flags
 python manage.py check --deploy
 
-# Проверка SSL настроек
+# Check SSL settings
 python manage.py check --deploy --settings=api.config.settings.production
 ```
 
-### Логи ошибок
+### Error logs
 ```bash
-# Проверьте логи на наличие ошибок безопасности
+# Check logs for security issues
 grep -i "security\|warning\|error" /var/log/app.log
 ```
 
-### Database подключение
+### Database connection
 ```bash
-# Проверьте подключение к БД
+# Verify DB connectivity
 python manage.py dbshell
 ```
 
-## ✅ Checklist перед продакшеном
+## ✅ Pre-production checklist
 
-- [ ] Изменить все дефолтные секретные ключи
-- [ ] Настроить HTTPS/SSL сертификаты
-- [ ] Включить SECURE_* настройки
-- [ ] Настроить SSL для базы данных
-- [ ] Настроить мониторинг (Sentry)
-- [ ] Создать суперпользователя
-- [ ] Провести security audit (`python manage.py check --deploy`)
-- [ ] Настроить резервное копирование БД
-- [ ] Настроить логирование
-- [ ] Протестировать все API endpoints
-- [ ] Настроить CI/CD pipeline
+- [ ] Change all default secret keys
+- [ ] Configure HTTPS/SSL certificates
+- [ ] Enable SECURE_* settings
+- [ ] Configure SSL for the database
+- [ ] Set up monitoring (Sentry)
+- [ ] Create a superuser
+- [ ] Run a security audit (`python manage.py check --deploy`)
+- [ ] Set up database backups
+- [ ] Configure logging
+- [ ] Test all API endpoints
+- [ ] Set up a CI/CD pipeline
 
 ---
 
-**Важно**: Никогда не запускайте приложение в production с дефолтными настройками безопасности!
+**Important**: Never run the app in production with default security settings!
 
-Автор: MiniMax Agent

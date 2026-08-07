@@ -2,13 +2,13 @@ from __future__ import annotations
 
 import logging
 import sys
-from enum import Enum
+from enum import StrEnum
 from os import getenv
 
 logger = logging.getLogger(__name__)
 
 
-class RunningMode(str, Enum):
+class RunningMode(StrEnum):
     LONG_POLLING = "LONG_POLLING"
     WEBHOOK = "WEBHOOK"
 

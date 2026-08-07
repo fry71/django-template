@@ -1,114 +1,121 @@
 # api/user/schema.py
 from __future__ import annotations
-from typing import Optional, List, Literal
+
 from datetime import datetime
+from typing import Any, Literal
+
 from ninja import Schema
-from pydantic import Field, ConfigDict
-import re
+from pydantic import ConfigDict, Field, field_validator
+
+type UserID = int
+type MessageID = int
+type PhotoID = int
 
 
-def validate_email(email: str) -> bool:
-    """Простая валидация email"""
-    pattern = r"^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$"
-    return re.match(pattern, email) is not None
+def _field(description: str, **kwargs: Any) -> Any:
+    """Field with metadata via pydantic v2 json_schema_extra."""
+    kwargs["json_schema_extra"] = {"metadata": {"description": description}}
+    return Field(**kwargs)
 
 
-class UserSchema(Schema):
-    """Schema for representing complete user profile"""
+class UserOutSchema(Schema):
+    """Full user profile."""
 
     model_config = ConfigDict(from_attributes=True)
 
-    id: int
-    username: str
-    email: str
-    first_name: Optional[str] = None
-    last_name: Optional[str] = None
-    patronymic: Optional[str] = None
-    is_staff: bool = False
-    is_active: bool = True
+    id: UserID = _field("User ID")
+    username: str = _field("Unique username")
+    email: str = _field("User email")
+    first_name: str | None = _field("First name", default=None)
+    last_name: str | None = _field("Last name", default=None)
+    patronymic: str | None = _field("Patronymic", default=None)
+    is_staff: bool = _field("Staff flag", default=False)
+    is_active: bool = _field("Active flag", default=True)
 
 
-class UserCreateSchema(Schema):
-    """Schema for creating new user"""
+class UserCreateIn(Schema):
+    """Input for creating a user."""
 
-    username: str
-    email: str
-    password: str
-    first_name: Optional[str] = None
-    last_name: Optional[str] = None
-    patronymic: Optional[str] = None
-
-
-class UserUpdateSchema(Schema):
-    """Schema for partial user data update"""
-
-    username: Optional[str] = None
-    email: Optional[str] = None
-    first_name: Optional[str] = None
-    last_name: Optional[str] = None
-    patronymic: Optional[str] = None
-    is_staff: Optional[bool] = None
-    is_active: Optional[bool] = None
+    username: str = _field(
+        "Unique username",
+        min_length=3,
+        max_length=150,
+    )
+    email: str = _field("User email")
+    password: str = _field(
+        "Password (minimum 8 characters)",
+        min_length=8,
+        max_length=128,
+    )
+    first_name: str | None = _field("First name", default=None)
+    last_name: str | None = _field("Last name", default=None)
+    patronymic: str | None = _field("Patronymic", default=None)
 
 
-class PaginatedUsersOut(Schema):
-    """Schema for paginated user list output"""
+class UserUpdateIn(Schema):
+    """Input for partial user update."""
 
-    count: int
-    results: List[UserSchema]
-
-
-class ErrorSchema(Schema):
-    """Schema for API error display"""
-
-    detail: str
-
-
-class UserLoginSchema(Schema):
-    """Schema for user login"""
-
-    username: str
-    password: str
+    username: str | None = _field(
+        "Unique username",
+        default=None,
+        min_length=3,
+        max_length=150,
+    )
+    email: str | None = _field("User email", default=None)
+    first_name: str | None = _field("First name", default=None)
+    last_name: str | None = _field("Last name", default=None)
+    patronymic: str | None = _field("Patronymic", default=None)
+    is_staff: bool | None = _field("Staff flag", default=None)
+    is_active: bool | None = _field("Active flag", default=None)
 
 
-class UserTokenSchema(Schema):
-    """Schema for JWT token issuance"""
+class UserLoginIn(Schema):
+    """Input for login."""
 
-    access_token: str
+    username: str = _field("Username")
+    password: str = _field("Password")
+
+
+class UserTokenOut(Schema):
+    """JWT token response."""
+
+    access_token: str = _field("JWT access token")
     token_type: Literal["Bearer"] = "Bearer"
 
 
-class MessageInSchema(Schema):
-    """Schema for message creation input data"""
+class MessageIn(Schema):
+    """Input for creating a message."""
 
-    content: str
-
-
-class MessageSchema(Schema):
-    """Schema for message output data"""
-
-    model_config = ConfigDict(from_attributes=True)
-
-    id: int
-    content: str
-    timestamp: datetime
-    sender: str
+    content: str = _field(
+        "Message text",
+        min_length=1,
+        max_length=4000,
+    )
 
 
-class PaginatedMessagesOut(Schema):
-    """Schema for paginated message list output"""
-
-    count: int
-    search: Optional[str] = None
-    sort: Optional[str] = None
-    results: List[MessageSchema]
-
-
-class PhotoSchema(Schema):
-    """Schema for user photos"""
+class MessageOut(Schema):
+    """Message output."""
 
     model_config = ConfigDict(from_attributes=True)
 
-    id: int
-    image: str
-    user_id: int
+    id: MessageID = _field("Message ID")
+    content: str = _field("Message text")
+    timestamp: datetime = _field("Created at")
+    sender: str = _field("Sender username")
+
+    @field_validator("sender", mode="before")
+    @classmethod
+    def _sender_to_username(cls, value: object) -> object:
+        if hasattr(value, "username"):
+            return value.username
+        return value
+
+
+class PhotoOut(Schema):
+    """User photo output."""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    id: PhotoID = _field("Photo ID")
+    image: str = _field("Image URL")
+    user_id: UserID = _field("Photo owner")

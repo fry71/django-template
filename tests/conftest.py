@@ -1,22 +1,26 @@
 # tests/conftest.py
-import os
-import django
-import uuid
-from django.conf import settings
+from __future__ import annotations
 
-# Настройка Django
+import os
+import uuid
+
 os.environ.setdefault("DJANGO_SETTINGS_MODULE", "api.config.settings")
+os.environ.setdefault("TASKIQ_IN_MEMORY", "true")
+
+import django
+
 django.setup()
 
 import pytest
 from django.contrib.auth import get_user_model
+from django.test import AsyncClient
 
 User = get_user_model()
 
 
 @pytest.fixture
-def user_data():
-    """Фикстура с уникальными данными для создания пользователя"""
+def user_data() -> dict[str, str]:
+    """Unique data for creating a user."""
     unique_id = uuid.uuid4().hex[:8]
     return {
         "username": f"testuser_{unique_id}",
@@ -28,47 +32,48 @@ def user_data():
 
 
 @pytest.fixture
-def test_user(user_data):
-    """Фикстура для создания тестового пользователя"""
-    user = User.objects.create_user(**user_data)
-    yield user
-    # Пробуем удалить, но не падаем если уже удален
-    try:
-        user.delete()
-    except:
-        pass
+def user_data2() -> dict[str, str]:
+    """Second user data (conflicts and permission tests)."""
+    unique_id = uuid.uuid4().hex[:8]
+    return {
+        "username": f"testuser2_{unique_id}",
+        "email": f"test2_{unique_id}@example.com",
+        "password": "testpass123",
+        "first_name": "Second",
+        "last_name": "User",
+    }
 
 
 @pytest.fixture
-def authenticated_client(client, user_data):
-    """Фикстура для аутентифицированного клиента"""
-    import json
-
-    # Создаем пользователя для аутентификации
+def test_user(user_data) -> User:
+    """Create a test user."""
     user = User.objects.create_user(**user_data)
+    yield user
+    user.delete()
 
-    # Получение токена
-    url = "/api/user/token"
-    response = client.post(
-        url,
-        json.dumps(
-            {"username": user_data["username"], "password": user_data["password"]}
-        ),
-        content_type="application/json",
-    )
 
-    if response.status_code == 200:
-        token = response.json()["access_token"]
-        client.defaults["HTTP_AUTHORIZATION"] = f"Bearer {token}"
+@pytest.fixture
+def async_client() -> AsyncClient:
+    """Async client for API tests."""
+    return AsyncClient()
 
-    yield client
 
-    # Очистка
-    if "HTTP_AUTHORIZATION" in client.defaults:
-        del client.defaults["HTTP_AUTHORIZATION"]
+@pytest.fixture(autouse=True)
+def mock_taskiq_tasks(monkeypatch) -> None:
+    """Tasks are queued but not executed.
 
-    # Удаляем пользователя
-    try:
-        user.delete()
-    except:
-        pass
+    Wrap kiq of each registered task with a stub so service tests can
+    assert enqueue without running the task.
+    """
+    from tasks.broker import broker
+
+    calls: list[tuple[str, tuple[object, ...]]] = []
+
+    async def fake_kiq(self: object, *args: object, **kwargs: object) -> object:
+        calls.append((getattr(self, "task_name", "<unknown>"), args))
+        return None
+
+    for task in broker.get_all_tasks().values():
+        monkeypatch.setattr(task, "kiq", fake_kiq.__get__(task, type(task)))
+
+    return calls
