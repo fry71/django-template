@@ -1,8 +1,12 @@
 from __future__ import annotations
 
+import logging
+
+logger = logging.getLogger(__name__)
+
 
 def main() -> None:
-    print("Hello from djtgback!")
+    logger.info("Hello from djtgback!")
 
 
 if __name__ == "__main__":

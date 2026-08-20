@@ -1,7 +1,6 @@
 from __future__ import annotations
 
-from ninja import Schema
-from pydantic import Field
+from pydantic import BaseModel, Field
 
 
 def _meta(description: str) -> dict[str, str]:
@@ -9,6 +8,6 @@ def _meta(description: str) -> dict[str, str]:
     return {"metadata": {"description": description}}
 
 
-class {{ camel_case_app_name }}Out(Schema):
+class {{ camel_case_app_name }}Out(BaseModel):
     id: int = Field(**_meta("Record ID"))
     message: str = Field(**_meta("Message"))

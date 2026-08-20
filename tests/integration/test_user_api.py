@@ -28,6 +28,13 @@ async def _get_token(async_client, username: str, password: str) -> str:
     return resp.json()["access_token"]
 
 
+def _error_type(body: dict[str, object]) -> str:
+    """Return the machine-readable error type from a DMR ErrorModel."""
+    detail = body["detail"]
+    assert isinstance(detail, list)
+    return str(detail[0]["type"])
+
+
 @pytest.mark.django_db(transaction=True)
 class TestUserApi:
     async def test_create_user_success(
@@ -58,8 +65,8 @@ class TestUserApi:
         )
         assert resp.status_code == 409
         body = resp.json()
-        assert body["detail"] == "Email already exists"
-        assert body["code"] == "conflict"
+        assert _error_type(body) == "conflict"
+        assert body["detail"][0]["msg"] == "Email already exists"
 
     async def test_get_user_not_found(
         self,
@@ -78,7 +85,7 @@ class TestUserApi:
         )
         assert resp.status_code == 404
         body = resp.json()
-        assert body["code"] == "not_found"
+        assert _error_type(body) == "not_found"
 
     async def test_users_pagination(
         self,
@@ -97,8 +104,8 @@ class TestUserApi:
         )
         assert resp.status_code == 200
         body = resp.json()
-        assert "items" in body
         assert "count" in body
+        assert "object_list" in body["page"]
         assert body["count"] >= 1
 
     async def test_token_invalid_credentials(self, async_client) -> None:
@@ -108,7 +115,7 @@ class TestUserApi:
             content_type="application/json",
         )
         assert resp.status_code == 401
-        assert resp.json()["detail"] == "Invalid credentials"
+        assert _error_type(resp.json()) == "security"
 
     async def test_get_me(self, async_client, user_data: dict[str, str]) -> None:
         await _register_user(async_client, user_data)
@@ -171,7 +178,7 @@ class TestUserApi:
             headers={"Authorization": f"Bearer {token}"},
         )
         assert resp.status_code == 409
-        assert resp.json()["code"] == "conflict"
+        assert _error_type(resp.json()) == "conflict"
 
     async def test_update_user_forbidden(
         self, async_client, user_data: dict[str, str]
@@ -190,7 +197,7 @@ class TestUserApi:
             headers={"Authorization": f"Bearer {token}"},
         )
         assert resp.status_code == 403
-        assert resp.json()["code"] == "permission_denied"
+        assert _error_type(resp.json()) == "permission_denied"
 
     async def test_delete_user_own(self, async_client, user_data: dict[str, str]) -> None:
         await _register_user(async_client, user_data)
@@ -342,7 +349,7 @@ class TestUserApi:
             headers={"Authorization": f"Bearer {token}"},
         )
         assert resp.status_code == 404
-        assert resp.json()["code"] == "not_found"
+        assert _error_type(resp.json()) == "not_found"
 
     async def test_me_requires_auth(self, async_client) -> None:
         resp = await async_client.get("/api/user/me")

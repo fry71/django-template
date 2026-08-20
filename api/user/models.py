@@ -39,7 +39,9 @@ class Message(models.Model):
         verbose_name_plural = "Messages"
 
     def __str__(self) -> str:
-        return f"{self.sender.username}: {self.content[:20]}"
+        sender_name = self.sender.username
+        message_preview = self.content[:20]
+        return f"{sender_name}: {message_preview}"
 
 
 class Photo(models.Model):
@@ -57,4 +59,6 @@ class Photo(models.Model):
         verbose_name_plural = "Photos"
 
     def __str__(self) -> str:
-        return f"{self.user.username} - {self.image.name}"
+        owner_name = self.user.username
+        file_name = self.image.name
+        return f"{owner_name} - {file_name}"

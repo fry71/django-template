@@ -11,7 +11,7 @@ logger = logging.getLogger(__name__)
 
 
 async def _send_welcome_email(email: str) -> None:
-    """Internal email-send implementation (external call)."""
+    """Send the welcome email internally (external call)."""
     logger.info("Sending welcome email to %s", email)
     # TODO: wire up a real SMTP/email backend
 

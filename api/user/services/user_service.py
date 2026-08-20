@@ -5,12 +5,11 @@ import logging
 import re
 from typing import TYPE_CHECKING
 
-from django.contrib.auth import aauthenticate
+from django.contrib.auth import aauthenticate, get_user_model
 from django.contrib.auth.password_validation import validate_password
 from django.core.exceptions import ValidationError as DjangoValidationError
-from django.contrib.auth import get_user_model 
+
 from api.common.exceptions import ConflictError, ValidationError
-from api.user.models import User
 from api.user.tasks import send_welcome_email
 
 if TYPE_CHECKING:
@@ -25,11 +24,6 @@ User = get_user_model()
 _EMAIL_PATTERN = re.compile(r"^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$")
 
 
-def validate_email(email: str) -> bool:
-    """Validate email format."""
-    return _EMAIL_PATTERN.match(email) is not None
-
-
 async def get_user(user_id: int) -> User | None:
     """Return user by id or None."""
     try:
@@ -38,17 +32,23 @@ async def get_user(user_id: int) -> User | None:
         return None
 
 
-async def get_user_by_email(email: str) -> User | None:
-    """Return user by email or None."""
-    try:
-        return await User.objects.aget(email=email)
-    except User.DoesNotExist:
-        return None
-
-
 def user_queryset() -> QuerySet[User]:
-    """Base queryset with default ordering."""
+    """Return base queryset with default ordering."""
     return User.objects.all().order_by("-id")
+
+
+async def _validate_unique_email(user_id: int | None, email: str) -> None:
+    """Validate email format and uniqueness for a user."""
+    if not _EMAIL_PATTERN.match(email):
+        msg = "Invalid email format"
+        raise ValidationError(msg, fields={"email": [msg]})
+
+    queryset = User.objects.all()
+    if user_id is not None:
+        queryset = queryset.exclude(id=user_id)
+    if await queryset.filter(email=email).afirst():
+        msg = "Email already exists"
+        raise ConflictError(msg, fields={"email": [msg]})
 
 
 async def create_user(payload: UserCreateIn) -> User:
@@ -57,14 +57,7 @@ async def create_user(payload: UserCreateIn) -> User:
     Simple write (single INSERT) — use acreate() without a transaction bridge.
     Background tasks (e.g. welcome email) are dispatched via kiq AFTER commit.
     """
-    if not validate_email(payload.email):
-        msg = "Invalid email format"
-        raise ValidationError(msg, fields={"email": [msg]})
-
-    existing = await User.objects.filter(email=payload.email).afirst()
-    if existing:
-        msg = "Email already exists"
-        raise ConflictError(msg, fields={"email": [msg]})
+    await _validate_unique_email(None, payload.email)
 
     try:
         validate_password(payload.password)
@@ -102,22 +95,12 @@ async def update_user(user_id: int, payload: UserUpdateIn) -> User | None:
 
     update_data = payload.model_dump(exclude_unset=True)
 
-    if update_data.get("email"):
-        if not validate_email(update_data["email"]):
-            msg = "Invalid email format"
-            raise ValidationError(msg, fields={"email": [msg]})
+    email = update_data.get("email")
+    if email:
+        await _validate_unique_email(user_id, email)
 
-        duplicate = (
-            await User.objects.exclude(id=user_id)
-            .filter(email=update_data["email"])
-            .afirst()
-        )
-        if duplicate:
-            msg = "Email already exists"
-            raise ConflictError(msg, fields={"email": [msg]})
-
-    for key, value in update_data.items():
-        setattr(user, key, value)
+    for key, field_value in update_data.items():
+        setattr(user, key, field_value)
     await user.asave()
     logger.info("User updated: %s", user.username)
     return user

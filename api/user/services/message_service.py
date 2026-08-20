@@ -16,7 +16,7 @@ def message_queryset(
     search: str | None = None,
     sort: str | None = None,
 ) -> QuerySet[Message]:
-    """Base message queryset with select_related to avoid N+1.
+    """Return base message queryset with select_related to avoid N+1.
 
     Returns a lazy QuerySet — the API layer decides how to serialize it.
     Sorting is restricted to a whitelist (arbitrary fields are rejected).
@@ -30,9 +30,12 @@ def message_queryset(
     return qs
 
 
-async def create_message(sender_id: int, content: str) -> Message:
+async def create_message(sender_id: int, message_content: str) -> Message:
     """Create a message — simple write (single INSERT)."""
-    message = await Message.objects.acreate(sender_id=sender_id, content=content)
+    message = await Message.objects.acreate(
+        sender_id=sender_id,
+        content=message_content,
+    )
     logger.info("Message created: %s", message.id)
     return message
 

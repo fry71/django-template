@@ -1,7 +1,7 @@
 [project]
 name = "django-gateway"
 version = "0.1.0"
-description = "API Template with Django, Django Ninja, Taskiq"
+description = "API Template with Django, django-modern-rest, Taskiq"
 keywords = ["django", "async", "websockets", "api", "template"]
 classifiers = [
     "Development Status :: 4 - Beta",
@@ -22,7 +22,7 @@ requires-python = ">=3.14"
 tool.uv.package = true
 dependencies = [
     # Core
-    "django>=6.0",
+    "django>=6.1",
     "pydantic>=2.12",
     "uvicorn[standard]",
     "uvicorn_worker",
@@ -43,8 +43,8 @@ dependencies = [
     "taskiq-redis",
 
     # API
-    "django-ninja>=1.4.3",
-    "pyjwt",
+    "django-modern-rest[msgspec,pydantic,jwt,openapi]",
+    "pyjwt[crypto]",
     "aiogram",
     
     # Database
@@ -99,11 +99,20 @@ dev = [
     "mkdocs>=1.5.0",
     "mkdocs-material>=9.5.0",
     "types-aiofiles>=25.1.0.20260518",
+    "wemake-python-styleguide",
 ]
 
-[project.scripts]
-taskiq-worker = "tasks.broker:broker.cli"
-runserver = "uvicorn api.web.asgi:application --reload"
+[tool.uv.sources]
+
+[flake8]
+max-line-length = 90  # Рекомендуется для совместимости с black/ruff
+select = "WPS"  # Включаем только правила wemake
+exclude = [
+    ".git",
+    "__pycache__",
+    "migrations",  # Исключаем миграции, они генерируются автоматически
+    ".venv"
+]
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
@@ -159,7 +168,6 @@ ignore = [
     "EXE002",
     "PD011",
     "CPY001",  # Copyright headers in a template are optional
-    "B008",  # django-ninja requires File(...) in defaults
     "DJ001",  # null=True on string fields is intentional in this template
     "S105",  # Placeholder JWT secret in config
     "S106",  # Test passwords
@@ -192,4 +200,3 @@ ignore = [
     "TC003",  # datetime must be imported at runtime for pydantic model building
 ]
 "main.py" = ["T201"]
-"**/api.py" = ["ARG001"]  # request is mandatory in django-ninja signatures

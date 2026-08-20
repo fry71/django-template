@@ -1,275 +1,359 @@
 # api/user/api.py
 from __future__ import annotations
 
-import logging
 from datetime import UTC, datetime, timedelta
-from typing import TYPE_CHECKING
+from http import HTTPStatus
+from math import ceil
+from typing import TYPE_CHECKING, TypedDict, cast
 
-import jwt
 from django.conf import settings
-from ninja import File, Router, UploadedFile
-from ninja.pagination import PageNumberPagination, paginate
-from ninja.security import HttpBearer
+from django.db.models import Model
+from dmr import modify
+from dmr.components import (  # noqa: TC002 - DMR resolves these at runtime
+    Body,
+    FileMetadata,
+    Path,
+    Query,
+)
+from dmr.pagination import Page
+from dmr.parsers import MultiPartParser
+from dmr.plugins.pydantic import PydanticSerializer
+from dmr.security.jwt import JWTAsyncAuth
+from dmr.security.jwt.views import (
+    ObtainTokensAsyncController,
+    ObtainTokensPayload,
+    ObtainTokensResponse,
+    RefreshTokenAsyncController,
+    RefreshTokenPayload,
+)
 
+from api.common.controllers import BaseAsyncController
 from api.common.exceptions import (
     NotFoundError,
     PermissionDeniedError,
+    UnauthorizedError,
 )
-from api.common.schemas import ErrorSchema, OperationResultSchema
-from api.user.schema import (
-    MessageIn,
-    MessageOut,
-    PhotoOut,
-    UserCreateIn,
-    UserLoginIn,
-    UserOutSchema,
-    UserTokenOut,
-    UserUpdateIn,
-)
+from api.common.schemas import OperationResultSchema
+from api.user import schema
+from api.user.models import User
 from api.user.services import message_service, photo_service, user_service
 
 if TYPE_CHECKING:
+    from collections.abc import Sequence
+
     from django.db.models import QuerySet
-    from django.http import HttpRequest
-
-    from api.user.models import Message, Photo, User
-
-logger = logging.getLogger(__name__)
-
-router = Router()
 
 
-class JWTAuth(HttpBearer):
-    """JWT authentication via HttpBearer."""
+JWT_AUTH = JWTAsyncAuth(
+    secret=settings.JWT_SECRET_KEY,
+    algorithm=settings.JWT_ALGORITHM,
+)
 
-    async def authenticate(self, request: HttpRequest, token: str) -> User | None:
-        try:
-            payload = jwt.decode(
-                token,
-                settings.JWT_SECRET_KEY,
-                algorithms=[settings.JWT_ALGORITHM],
-            )
-        except jwt.InvalidTokenError as exc:
-            logger.warning("JWT invalid: %s", exc)
-            return None
-        except Exception:
-            logger.exception("JWT authenticate unexpected error")
-            return None
+_ACCESS_LIFETIME_MINUTES = settings.JWT_ACCESS_TOKEN_LIFETIME
 
-        user_id = payload.get("user_id")
-        if not user_id:
-            logger.warning("JWT missing user_id: %s", payload)
-            return None
-        user = await user_service.get_user(user_id)
+
+class _UserIdPath(TypedDict):
+    """Path parameters for user detail routes."""
+
+    user_id: int
+
+
+class _MessageIdPath(TypedDict):
+    """Path parameters for message detail routes."""
+
+    message_id: int
+
+
+class ObtainAccessAndRefreshController(
+    ObtainTokensAsyncController[
+        PydanticSerializer,
+        ObtainTokensPayload,
+        ObtainTokensResponse,
+    ],
+):
+    """Issue an access and refresh token pair for valid credentials."""
+
+    jwt_secret = settings.JWT_SECRET_KEY
+
+    async def convert_auth_payload(
+        self,
+        payload: ObtainTokensPayload,
+    ) -> ObtainTokensPayload:
+        """Pass the typed login payload through to django authenticate."""
+        return payload
+
+    async def make_api_response(self) -> ObtainTokensResponse:
+        """Build the access/refresh token pair."""
+        now = datetime.now(UTC)
+        return {
+            "access_token": self.create_jwt_token(
+                expiration=now + timedelta(minutes=_ACCESS_LIFETIME_MINUTES),
+                token_type="access",
+            ),
+            "refresh_token": self.create_jwt_token(
+                expiration=now + self.jwt_refresh_expiration,
+                token_type="refresh",
+            ),
+        }
+
+
+class RefreshAccessAndRefreshController(
+    RefreshTokenAsyncController[
+        PydanticSerializer,
+        RefreshTokenPayload,
+        ObtainTokensResponse,
+    ],
+):
+    """Issue a fresh token pair from a valid refresh token."""
+
+    jwt_secret = settings.JWT_SECRET_KEY
+
+    async def convert_refresh_payload(self, payload: RefreshTokenPayload) -> str:
+        """Extract the raw refresh token string from the payload."""
+        return payload["refresh_token"]
+
+    async def make_api_response(self) -> ObtainTokensResponse:
+        """Build the refreshed access/refresh token pair."""
+        now = datetime.now(UTC)
+        return {
+            "access_token": self.create_jwt_token(
+                expiration=now + timedelta(minutes=_ACCESS_LIFETIME_MINUTES),
+                token_type="access",
+            ),
+            "refresh_token": self.create_jwt_token(
+                expiration=now + self.jwt_refresh_expiration,
+                token_type="refresh",
+            ),
+        }
+
+
+async def page_items[TItem: Model](
+    queryset: QuerySet[TItem],
+    page: int,
+    page_size: int,
+) -> tuple[Sequence[TItem], int, int]:
+    """Slice an async queryset into a page plus count metadata."""
+    count = await queryset.acount()
+    num_pages = max(1, ceil(count / page_size))
+    safe_page = min(page, num_pages)
+    offset = (safe_page - 1) * page_size
+    records: Sequence[TItem] = [
+        record async for record in queryset[offset : offset + page_size]
+    ]
+    return records, count, num_pages
+
+
+def _current_user(controller: BaseAsyncController) -> User:
+    """Return the authenticated user, narrowing the request user type."""
+    user = controller.request.user
+    if not isinstance(user, User):
+        msg = "Expected an authenticated user"
+        raise UnauthorizedError(msg)
+    return user
+
+
+class UserListController(BaseAsyncController):
+    """List users (paginated) or create a new one."""
+
+    @modify(auth=(JWT_AUTH,))
+    async def get(self, parsed_query: Query[schema.PageQuery]) -> schema.UsersPage:
+        """Paginated user list."""
+        records, count, num_pages = await page_items(
+            user_service.user_queryset(),
+            parsed_query.page,
+            parsed_query.page_size,
+        )
+        users = [
+            schema.UserOutSchema.model_validate(user, from_attributes=True)
+            for user in records
+        ]
+        return schema.UsersPage(
+            count=count,
+            num_pages=num_pages,
+            per_page=parsed_query.page_size,
+            page=Page(number=min(parsed_query.page, num_pages), object_list=users),
+        )
+
+    @modify(status_code=HTTPStatus.CREATED)
+    async def post(self, parsed_body: Body[schema.UserCreateIn]) -> schema.UserOutSchema:
+        """Create a new user."""
+        user = await user_service.create_user(parsed_body)
+        return schema.UserOutSchema.model_validate(user, from_attributes=True)
+
+
+class UserDetailController(BaseAsyncController):
+    """Read, update, or delete a single user."""
+
+    auth = (JWT_AUTH,)
+
+    async def get(self, parsed_path: Path[_UserIdPath]) -> schema.UserOutSchema:
+        """Get a user by id."""
+        user = await user_service.get_user(parsed_path["user_id"])
         if user is None:
-            logger.warning("JWT user %s not found", user_id)
-            return None
-        request.user = user
-        return user
+            msg = "User not found"
+            raise NotFoundError(msg)
+        return schema.UserOutSchema.model_validate(user, from_attributes=True)
+
+    async def put(
+        self,
+        parsed_path: Path[_UserIdPath],
+        parsed_body: Body[schema.UserUpdateIn],
+    ) -> schema.UserOutSchema:
+        """Update a user partially."""
+        user_id = parsed_path["user_id"]
+        auth_user = _current_user(self)
+        if auth_user.id != user_id and not auth_user.is_staff:
+            msg = "No permission to edit"
+            raise PermissionDeniedError(msg)
+
+        user = await user_service.update_user(user_id, parsed_body)
+        if user is None:
+            msg = "User not found"
+            raise NotFoundError(msg)
+        return schema.UserOutSchema.model_validate(user, from_attributes=True)
+
+    @modify(status_code=HTTPStatus.NO_CONTENT)
+    async def delete(self, parsed_path: Path[_UserIdPath]) -> None:
+        """Delete a user."""
+        user_id = parsed_path["user_id"]
+        auth_user = _current_user(self)
+        if auth_user.id != user_id and not auth_user.is_staff:
+            msg = "No permission to delete"
+            raise PermissionDeniedError(msg)
+
+        deleted = await user_service.delete_user(user_id)
+        if not deleted:
+            msg = "User not found"
+            raise NotFoundError(msg)
 
 
-@router.post("/token", response={200: UserTokenOut, 401: ErrorSchema})
-async def get_token(
-    request: HttpRequest,
-    payload: UserLoginIn,
-) -> tuple[int, dict[str, str]]:
-    """Issue a JWT token for username/password."""
-    user = await user_service.authenticate(payload.username, payload.password)
-    if user is None:
-        return 401, {"detail": "Invalid credentials"}
+class MeController(BaseAsyncController):
+    """Return the currently authenticated user."""
 
-    now = datetime.now(UTC)
-    token_payload = {
-        "user_id": user.id,
-        "username": user.username,
-        "exp": int(
-            (now + timedelta(minutes=settings.JWT_ACCESS_TOKEN_LIFETIME)).timestamp(),
-        ),
-        "iat": int(now.timestamp()),
-    }
-    token = jwt.encode(
-        token_payload,
-        settings.JWT_SECRET_KEY,
-        algorithm=settings.JWT_ALGORITHM,
-    )
-    return 200, {"access_token": token, "token_type": "Bearer"}
+    auth = (JWT_AUTH,)
+
+    async def get(self) -> schema.UserOutSchema:
+        """Return the current authenticated user."""
+        return schema.UserOutSchema.model_validate(
+            _current_user(self), from_attributes=True
+        )
 
 
-@router.get("/me", response=UserOutSchema, auth=JWTAuth())
-async def get_me(request: HttpRequest) -> User:
-    """Current authenticated user."""
-    return request.user
+class MessageListController(BaseAsyncController):
+    """List messages (paginated, searchable) or create a new one."""
+
+    auth = (JWT_AUTH,)
+
+    async def get(
+        self,
+        parsed_query: Query[schema.MessagePageQuery],
+    ) -> schema.MessagesPage:
+        """Paginated message list with optional search."""
+        records, count, num_pages = await page_items(
+            message_service.message_queryset(
+                search=parsed_query.search,
+                sort=parsed_query.sort,
+            ),
+            parsed_query.page,
+            parsed_query.page_size,
+        )
+        messages = [
+            schema.MessageOut(
+                id=message.id,
+                content=cast("str", message.content),
+                timestamp=cast("datetime", message.timestamp),
+                sender=cast("str", cast("User", message.sender).username),
+            )
+            for message in records
+        ]
+        return schema.MessagesPage(
+            count=count,
+            num_pages=num_pages,
+            per_page=parsed_query.page_size,
+            page=Page(number=min(parsed_query.page, num_pages), object_list=messages),
+        )
+
+    @modify(status_code=HTTPStatus.CREATED)
+    async def post(self, parsed_body: Body[schema.MessageIn]) -> schema.MessageOut:
+        """Create a message."""
+        user = _current_user(self)
+        message = await message_service.create_message(
+            user.id,
+            parsed_body.content,
+        )
+        return schema.MessageOut(
+            id=message.id,
+            content=cast("str", message.content),
+            timestamp=cast("datetime", message.timestamp),
+            sender=cast("str", user.username),
+        )
 
 
-@router.get(
-    "/users",
-    response=list[UserOutSchema],
-    auth=JWTAuth(),
-    by_alias=False,
-)
-@paginate(PageNumberPagination)
-async def get_users(request: HttpRequest) -> QuerySet[User]:
-    """Paginated user list via django-ninja."""
-    return user_service.user_queryset()
+class MessageDetailController(BaseAsyncController):
+    """Delete a single message."""
+
+    auth = (JWT_AUTH,)
+
+    async def delete(
+        self,
+        parsed_path: Path[_MessageIdPath],
+    ) -> OperationResultSchema:
+        """Delete a message owned by the current user."""
+        message_id = parsed_path["message_id"]
+        message = await message_service.get_message(message_id)
+        if message is None:
+            msg = "Message not found"
+            raise NotFoundError(msg)
+        auth_user = _current_user(self)
+        if message.sender_id != auth_user.id and not auth_user.is_staff:
+            msg = "No permission to delete message"
+            raise PermissionDeniedError(msg)
+
+        await message_service.delete_message(message_id)
+        return OperationResultSchema(detail="Message deleted")
 
 
-@router.post(
-    "/users",
-    response={201: UserOutSchema, 400: ErrorSchema, 401: ErrorSchema, 409: ErrorSchema},
-)
-async def create_user(request: HttpRequest, payload: UserCreateIn) -> tuple[int, User]:
-    """Create a new user."""
-    user = await user_service.create_user(payload)
-    return 201, user
+class PhotoListController(BaseAsyncController):
+    """List the current user's photos or upload a new one."""
 
+    auth = (JWT_AUTH,)
+    parsers = (MultiPartParser(),)
 
-@router.get(
-    "/users/{user_id}",
-    response={200: UserOutSchema, 401: ErrorSchema, 404: ErrorSchema},
-    auth=JWTAuth(),
-)
-async def get_user(request: HttpRequest, user_id: int) -> tuple[int, User | ErrorSchema]:
-    """Get user by id."""
-    user = await user_service.get_user(user_id)
-    if user is None:
-        msg = "User not found"
-        raise NotFoundError(msg)
-    return 200, user
+    async def get(self, parsed_query: Query[schema.PageQuery]) -> schema.PhotosPage:
+        """List photos for the current user."""
+        records, count, num_pages = await page_items(
+            photo_service.photo_queryset(_current_user(self).id),
+            parsed_query.page,
+            parsed_query.page_size,
+        )
+        photos = [
+            schema.PhotoOut(
+                id=photo.id,
+                image=photo.image.url if photo.image else "",
+                user_id=photo.user_id,
+            )
+            for photo in records
+        ]
+        return schema.PhotosPage(
+            count=count,
+            num_pages=num_pages,
+            per_page=parsed_query.page_size,
+            page=Page(number=min(parsed_query.page, num_pages), object_list=photos),
+        )
 
-
-@router.put(
-    "/users/{user_id}",
-    response={
-        200: UserOutSchema,
-        400: ErrorSchema,
-        401: ErrorSchema,
-        403: ErrorSchema,
-        404: ErrorSchema,
-    },
-    auth=JWTAuth(),
-)
-async def update_user(
-    request: HttpRequest,
-    user_id: int,
-    payload: UserUpdateIn,
-) -> tuple[int, User | ErrorSchema]:
-    """Partial user update."""
-    if request.user.id != user_id and not request.user.is_staff:
-        msg = "No permission to edit"
-        raise PermissionDeniedError(msg)
-
-    user = await user_service.update_user(user_id, payload)
-    if user is None:
-        msg = "User not found"
-        raise NotFoundError(msg)
-    return 200, user
-
-
-@router.delete(
-    "/users/{user_id}",
-    response={204: None, 401: ErrorSchema, 403: ErrorSchema, 404: ErrorSchema},
-    auth=JWTAuth(),
-)
-async def delete_user(request: HttpRequest, user_id: int) -> tuple[int, None]:
-    """Delete a user."""
-    if request.user.id != user_id and not request.user.is_staff:
-        msg = "No permission to delete"
-        raise PermissionDeniedError(msg)
-
-    deleted = await user_service.delete_user(user_id)
-    if not deleted:
-        msg = "User not found"
-        raise NotFoundError(msg)
-    return 204, None
-
-
-@router.get(
-    "/messages",
-    response=list[MessageOut],
-    auth=JWTAuth(),
-    by_alias=False,
-)
-@paginate(PageNumberPagination)
-async def get_messages(
-    request: HttpRequest,
-    search: str | None = None,
-    sort: str | None = None,
-) -> QuerySet[Message]:
-    """Paginated message list with search."""
-    return message_service.message_queryset(search=search, sort=sort)
-
-
-@router.post(
-    "/messages",
-    response={201: MessageOut, 400: ErrorSchema, 401: ErrorSchema},
-    auth=JWTAuth(),
-)
-async def create_message(
-    request: HttpRequest,
-    payload: MessageIn,
-) -> tuple[int, MessageOut]:
-    """Create a message."""
-    message = await message_service.create_message(request.user.id, payload.content)
-    return 201, MessageOut(
-        id=message.id,
-        content=message.content,
-        timestamp=message.timestamp,
-        sender=request.user.username,
-    )
-
-
-@router.delete(
-    "/messages/{message_id}",
-    response={
-        200: OperationResultSchema,
-        401: ErrorSchema,
-        403: ErrorSchema,
-        404: ErrorSchema,
-    },
-    auth=JWTAuth(),
-)
-async def delete_message(
-    request: HttpRequest,
-    message_id: int,
-) -> tuple[int, dict[str, str]]:
-    """Delete a message."""
-    message = await message_service.get_message(message_id)
-    if message is None:
-        msg = "Message not found"
-        raise NotFoundError(msg)
-    if message.sender_id != request.user.id and not request.user.is_staff:
-        msg = "No permission to delete message"
-        raise PermissionDeniedError(msg)
-
-    await message_service.delete_message(message_id)
-    return 200, {"detail": "Message deleted"}
-
-
-@router.get(
-    "/photos",
-    response=list[PhotoOut],
-    auth=JWTAuth(),
-    by_alias=False,
-)
-@paginate(PageNumberPagination)
-async def get_photos(request: HttpRequest) -> QuerySet[Photo]:
-    """List photos for the current user."""
-    return photo_service.photo_queryset(request.user.id)
-
-
-@router.post(
-    "/photos",
-    response={201: PhotoOut, 400: ErrorSchema, 401: ErrorSchema},
-    auth=JWTAuth(),
-)
-async def create_photo(
-    request: HttpRequest,
-    file: UploadedFile = File(...),
-) -> tuple[int, PhotoOut]:
-    """Upload a photo."""
-    photo = await photo_service.create_photo(request.user.id, file)
-    return 201, PhotoOut(
-        id=photo.id,
-        image=photo.image.url if photo.image else "",
-        user_id=photo.user_id,
-    )
+    @modify(status_code=HTTPStatus.CREATED)
+    async def post(
+        self,
+        parsed_file_metadata: FileMetadata[schema.PhotosUpload],  # noqa: ARG002
+    ) -> schema.PhotoOut:
+        """Upload a photo for the current user."""
+        uploaded = self.request.FILES.get("image")
+        if uploaded is None:
+            msg = "No image file provided"
+            raise NotFoundError(msg)
+        photo = await photo_service.create_photo(_current_user(self).id, uploaded)
+        return schema.PhotoOut(
+            id=photo.id,
+            image=photo.image.url if photo.image else "",
+            user_id=photo.user_id,
+        )

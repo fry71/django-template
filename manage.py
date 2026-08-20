@@ -41,34 +41,45 @@ def _add_template_if_not_provided() -> None:
 
 
 def _add_app_directory_if_not_provided() -> None:
-    app_name, _app_directory = _get_app_parameters()
-    if _app_directory:
+    app_name, provided_directory = _get_app_parameters()
+    if provided_directory:
         return
 
     app_directory = _APPS_DIR / app_name
     app_directory.mkdir(parents=True, exist_ok=True)
 
-    sys.argv.insert(sys.argv.index(app_name) + 1, str(app_directory))
+    position = sys.argv.index(app_name) + 1
+    sys.argv.insert(position, str(app_directory))
 
 
 def _get_app_parameters() -> tuple[_AppName, _AppDirectory]:
+    arguments = _positional_arguments()
     app_name = ""
     app_directory = ""
-
-    startapp_index = sys.argv.index("startapp")
-    for index in range(startapp_index + 1, len(sys.argv)):
-        if sys.argv[index - 1].startswith("-") or sys.argv[index].startswith("-"):
-            continue
-
+    for argument in arguments:
         if not app_name:
-            app_name = sys.argv[index]
+            app_name = argument
         elif not app_directory:
-            app_directory = sys.argv[index]
+            app_directory = argument
         else:
             msg = "Too many positional arguments for startapp command."
             raise ValueError(msg)
-
     return app_name, app_directory
+
+
+def _positional_arguments() -> list[str]:
+    arguments = sys.argv[sys.argv.index("startapp") + 1 :]
+    positional = []
+    for index, argument in enumerate(arguments):
+        if _is_skipped(arguments, index):
+            continue
+        positional.append(argument)
+    return positional
+
+
+def _is_skipped(arguments: list[str], index: int) -> bool:
+    previous = arguments[index - 1] if index > 0 else ""
+    return previous.startswith("-") or arguments[index].startswith("-")
 
 
 if __name__ == "__main__":

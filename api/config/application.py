@@ -19,10 +19,9 @@ INSTALLED_APPS = [
     "django.contrib.messages",
     "django.contrib.staticfiles",
     "corsheaders",
-    "axes",
     "silk",
     "api.user.apps.UserConfig",
-    "ninja",
+    "dmr",
     "channels",
     "cacheops",
 ]
@@ -37,7 +36,6 @@ MIDDLEWARE = [
     "django.contrib.messages.middleware.MessageMiddleware",
     "django.middleware.clickjacking.XFrameOptionsMiddleware",
     SILKY_MIDDLEWARE_CLASS,
-    "axes.middleware.AxesMiddleware",
 ]
 
 if not USE_SILK:
@@ -71,6 +69,8 @@ CHANNEL_LAYERS = {
     },
 }
 LOGIN_URL = "/login/"
+LOGIN_REDIRECT_URL = "/chat/"
+LOGOUT_REDIRECT_URL = "/login/"
 
 
 LANGUAGE_CODE = getenv("LANGUAGE_CODE", "en-us")

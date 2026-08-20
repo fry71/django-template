@@ -6,7 +6,7 @@ from tasks.broker import broker
 
 @broker.task
 async def simple_test_task(x: int, y: int) -> int:
-    """Simple test task to verify Taskiq works."""
+    """Verify that a simple Taskiq task runs."""
     return x + y
 
 

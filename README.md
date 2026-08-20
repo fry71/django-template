@@ -1,114 +1,144 @@
-# Django Gateway - High Performance Django Template
+# Django Gateway — High Performance Django Template
 
-A production-ready template project showcasing the integration of modern web development technologies with Django, providing performance comparable to FastAPI while maintaining all Django benefits.
+A production-ready Django template showcasing modern web development: a fully **async REST API** built with **django-modern-rest**, **JWT** authentication, **real-time chat** (SSE + REST) with Django forms and templates, background jobs with Taskiq, and performance comparable to FastAPI — while keeping all Django batteries.
 
 [![Python Version](https://img.shields.io/badge/python-3.14-blue.svg)](https://www.python.org/downloads/)
-[![Django Version](https://img.shields.io/badge/django-6.0-green.svg)](https://www.djangoproject.com/)
+[![Django Version](https://img.shields.io/badge/django-6.1-green.svg)](https://www.djangoproject.com/)
 [![License](https://img.shields.io/badge/license-MIT-blue.svg)](https://opensource.org/licenses/MIT)
 
 ## Features
-- 🚀 **High Performance** - Async Django with performance comparable to FastAPI
-- 🔧 **Full Async Support** - Django Ninja API with async/await
-- 📦 **All Django Batteries** - Admin, ORM, Auth, and more
-- 🔄 **Task Processing** - Taskiq for background tasks
-- 🔐 **JWT Authentication** - Secure token-based auth
-- 💬 **Real-time Chat** - WebSocket support with Channels
-- 📚 **OpenAPI Documentation** - Auto-generated API docs
-- 🐳 **Docker Ready** - Production-ready Docker setup
-- 🛡️ **Security** - Built-in security best practices
-
-
+- 🚀 **High Performance** — Async Django with performance comparable to FastAPI
+- 🔧 **Async-first API** — django-modern-rest (DMR) controllers, fully async ORM (`aget`, `acreate`, `aiterator`)
+- 📦 **All Django Batteries** — Admin, ORM, Auth, Forms, Templates
+- 💬 **Real-time Chat** — Django form page wired via **Server-Sent Events (SSE)** + **REST**, session authentication
+- 🧩 **Django 6.1 Template Partials** — `{% partialdef %}` / `{% partial %}` for server-rendered chat messages
+- 🔐 **JWT Authentication** — token-based auth for the API (`/api/user/token`, `/api/user/refresh`)
+- 🔄 **Background Tasks** — Taskiq jobs dispatched after DB commit (`task.kiq(...)`)
+- 📚 **OpenAPI Documentation** — auto-generated Swagger UI
+- 🗄️ **Modern ORM** — strict typing (PEP 695), `select_related` to avoid N+1, N+1 guard
+- 🐳 **Docker Ready** — production-ready Docker setup
+- 🛡️ **Security** — built-in security best practices
 
 ## Technologies
-- [Django 6.0](https://www.djangoproject.com/) - High-level Python web framework
-- [Python 3.14](https://www.python.org/) - Modern Python runtime
-- [Django Ninja](https://django-ninja.rest-framework.com/) - Fast Django REST API framework
-- [Pydantic v2](https://docs.pydantic.dev/) - Data validation with strict typing
-- [Taskiq](https://taskiq-python.github.io/) - Modern task queue (Celery alternative)
-- [Valkey](https://valkey.io/) - Redis-compatible datastore
-- [Sentry](https://sentry.io/) - Error monitoring and performance tracking
-- [Django Channels](https://channels.readthedocs.io/) - WebSocket and async support
-- [WebSockets](https://developer.mozilla.org/en-US/docs/Web/API/WebSockets_API) - Real-time communication
+- [Django 6.1](https://www.djangoproject.com/) — High-level Python web framework
+- [Python 3.14](https://www.python.org/) — Modern Python runtime
+- [django-modern-rest](https://github.com/django-modern-rest/django-modern-rest) — Fast, async-first REST API framework (Django Ninja successor)
+- [Pydantic v2](https://docs.pydantic.dev/) — Data validation with strict typing
+- [msgspec](https://jcristharif.com/msgspec/) — High-performance serialization (installed; used optionally)
+- [Taskiq](https://taskiq-python.github.io/) — Modern task queue (Celery alternative)
+- [Valkey](https://valkey.io/) — Redis-compatible datastore
+- [Sentry](https://sentry.io/) — Error monitoring and performance tracking
+- [Django Channels](https://channels.readthedocs.io/) — WebSocket support
+
+## Project structure
+```
+api/
+├── common/          # Shared DTOs, error handling (BaseAsyncController)
+├── config/          # Split settings (split_settings)
+├── user/            # User/Message/Photo models, DMR controllers, services, forms, views
+│   ├── api.py       # REST controllers (token, users, messages, photos)
+│   ├── views.py     # Chat page, REST send, SSE stream
+│   ├── services/    # Async service layer (business logic)
+│   ├── forms.py     # Django form for the chat
+│   └── migrations/  # Includes demo users (0003_demo_users)
+├── templates/       # Django templates (base, login, chat with partials)
+└── web/             # Router, URLconf, ASGI/WSGI
+```
 
 ## Quick Start
 
-## Create .env
+### 1. Create `.env`
 ```bash
 cp .env.example .env
 ```
 
-### With `uv` (recommended):
+### 2. Install dependencies
+With `uv` (recommended):
 ```bash
-# Install dependencies
 uv sync
-
-# Run development server
-uv run uvicorn api.web.asgi:application --host 0.0.0.0 --port 8000 --reload
-
-#or
-make run.server.local
 ```
-### Without uv:
+
+Without `uv`:
 ```bash
-# Install uv and dependencies
 curl -LsSf https://astral.sh/uv/install.sh | sh
 uv sync
+```
 
-# Run development server
+### 3. Run migrations
+```bash
+uv run python manage.py migrate
+```
+This also creates the demo users `demo1` and `demo2` (password: `demo12345`, override with `DJANGO_DEMO_PASSWORD`) and, if you set `DJANGO_ADMIN_USERNAME`/`DJANGO_ADMIN_PASSWORD`, the admin user.
+
+### 4. Run the development server
+```bash
 uv run uvicorn api.web.asgi:application --host 0.0.0.0 --port 8000 --reload
-
-#or
+# or
 make run.server.local
 ```
 
-## Main Endpoints 
+## Main endpoints
 
-    API Docs: http://127.0.0.1:8000/api/docs 
-    Admin Panel: http://127.0.0.1:8000/admin/  (admin/admin)
-    WebSocket Chat: http://127.0.0.1:8000/chat/ 
-    User Profile: http://127.0.0.1:8000/profile/ 
-     
+| Endpoint | Description |
+| --- | --- |
+| `http://127.0.0.1:8000/api/docs` | Swagger UI / OpenAPI docs |
+| `http://127.0.0.1:8000/admin/` | Django admin (`admin` / `admin` by default) |
+| `http://127.0.0.1:8000/login/` | Login page (session auth) |
+| `http://127.0.0.1:8000/chat/` | Real-time chat (SSE + REST, requires login) |
+| `POST /api/user/token` | Obtain JWT access + refresh tokens |
+| `POST /api/user/refresh` | Refresh the access token |
+| `GET/POST /api/user/users` | List / create users |
+| `GET/POST /api/user/messages` | List / create messages (JWT) |
+| `GET/POST /api/user/photos` | List / upload photos (JWT, multipart) |
 
-# Performance Benefits 
+## Real-time chat
 
-## This template provides: 
+The chat page (`/chat/`) is a classic Django form + template page authenticated via the session:
 
-    Async Django - Non-blocking I/O operations
-    Connection Pooling - Efficient database connections
-    Caching - Redis-based caching with cacheops
-    Background Tasks - Non-blocking task processing
-    WebSocket Support - Real-time communication
-    Production Ready - Optimized for high load
-     
+- **Send** — `POST /chat/send/` (REST): validates `MessageForm`, creates the message, returns JSON `{id, content, sender, timestamp}`.
+- **Receive** — `GET /chat/stream/` (SSE): streams new messages as `text/event-stream`. Events carry an `id` (message PK) so the browser resumes correctly after reconnects (`Last-Event-ID`).
+- **Rendering** — the message markup is a **Django 6.1 template partial** (`{% partialdef message-item %}` in `api/templates/chat/chat.html`), used both for the initial page render and for SSE-injected HTML — a single source of truth.
 
-## Services 
+### Try it
+1. Log in as `demo1` / `demo12345` in one browser and `demo2` / `demo12345` in another.
+2. Send a message from either user — it appears live in both chats via SSE.
 
-    Valkey: redis://localhost:6379
-    PostgreSQL: postgres://localhost:5432
-    Sentry: https://sentry.io/ 
-     
+## Testing
+```bash
+USE_REDIS_FOR_CACHE=false TASKIQ_IN_MEMORY=true DJANGO_SETTINGS_MODULE=api.config.settings uv run pytest tests/ -q
+```
 
-## Acknowledgments 
+## Linting
+- **ruff** — `uv run ruff check .`
+- **black** — `uv run black --check api/`
+- **wemake-python-styleguide (flake8)** — `uv run flake8 --max-line-length=90 --select=WPS api/`
+  - Allowed exceptions: `WPS226` (string over-use), `WPS432` (magic numbers for `max_length`/HTTP statuses), `WPS110` (standard domain names).
+- **mypy** — `uv run mypy api/`
 
-   - [Django Community](https://www.djangoproject.com/) - For the amazing framework
-   - [Vitalik (Django Ninja)](https://github.com/vitalik) – For creating the awesome Django Ninja framework.
-   - [MaksimZayats (aiogram-django-template)](https://github.com/MaksimZayats) – For inspiration and the aiogram-django-template.
-   - [Suor (django-cacheops)](https://github.com/Suor) – For the useful django-cacheops project.
-   - [Taskiq Team](https://taskiq-python.github.io/) - Modern task queue solution
-   - [Django Channels Team](https://github.com/django/channels)
-     
+## Performance benefits
+- Async Django — non-blocking I/O operations
+- Connection pooling — efficient database connections
+- Caching — Redis-based caching with cacheops
+- Background tasks — non-blocking task processing (dispatched after commit)
+- N+1 guard — `select_related` / `prefetch_related` everywhere
+
+## Services
+- Valkey: `redis://localhost:6379`
+- PostgreSQL: `postgres://localhost:5432`
+- Sentry: `https://sentry.io/`
+
+## Acknowledgments
+- [Django Community](https://www.djangoproject.com/) — For the amazing framework
+- [django-modern-rest](https://github.com/django-modern-rest/django-modern-rest) — The async REST framework used here
+- [MaksimZayats (aiogram-django-template)](https://github.com/MaksimZayats) — For inspiration
+- [Suor (django-cacheops)](https://github.com/Suor) — For the useful django-cacheops project
+- [Taskiq Team](https://taskiq-python.github.io/) — Modern task queue solution
 
 ## License
-This project is licensed under the [MIT License](https://opensource.org/licenses/MIT).  
+This project is licensed under the [MIT License](https://opensource.org/licenses/MIT).
 Dependencies and their licenses:
 - Django: [BSD License](https://opensource.org/licenses/BSD-3-Clause)
-- Django Ninja: [MIT License](https://github.com/vitalik/django-ninja/blob/master/LICENSE)
+- django-modern-rest: [MIT License](https://github.com/django-modern-rest/django-modern-rest/blob/master/LICENSE)
 - Taskiq: [BSD License](https://github.com/taskiq-python/taskiq/blob/master/LICENSE)
 - Valkey: [BSD 3-Clause License](https://github.com/valkey-io/valkey/blob/unstable/COPYING)
-- RabbitMQ: [Mozilla Public License 2.0](https://github.com/rabbitmq/rabbitmq-server/blob/main/LICENSE-MPL-RabbitMQ)
 - Sentry: [BSD License](https://github.com/getsentry/sentry/blob/master/LICENSE)
-- Django Channels: [BSD License](https://github.com/django/channels/blob/main/LICENSE)
-- Turbo (Hotwired): [MIT License](https://github.com/hotwired/turbo/blob/main/LICENSE)
-
-
-     

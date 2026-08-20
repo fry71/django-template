@@ -20,7 +20,7 @@ User = get_user_model()
 
 @pytest.fixture
 def user_data() -> dict[str, str]:
-    """Unique data for creating a user."""
+    """Build unique data for creating a user."""
     unique_id = uuid.uuid4().hex[:8]
     return {
         "username": f"testuser_{unique_id}",

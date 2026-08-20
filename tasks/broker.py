@@ -3,13 +3,28 @@ from __future__ import annotations
 
 import logging
 import os
+from contextlib import suppress
+from importlib import import_module
 
 import django
+from django.apps import apps
 from django.conf import settings
 from taskiq import InMemoryBroker
 from taskiq_redis import ListQueueBroker, RedisAsyncResultBackend
 
 logger = logging.getLogger(__name__)
+
+
+def register_tasks() -> None:
+    """Import taskiq tasks so they register with the broker.
+
+    Imports each Django app's ``tasks.py`` plus the local test-task module.
+    """
+    for app_config in apps.get_app_configs():
+        with suppress(ImportError):
+            import_module(f"{app_config.name}.tasks")
+
+    import_module("tasks.test_tasks")
 
 
 def create_broker() -> InMemoryBroker | ListQueueBroker:
@@ -51,3 +66,5 @@ def create_broker() -> InMemoryBroker | ListQueueBroker:
 
 
 broker = create_broker()
+register_tasks()
+logger.info("Registered %d tasks", len(broker.get_all_tasks()))

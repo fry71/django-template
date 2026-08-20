@@ -2,10 +2,10 @@
 from __future__ import annotations
 
 from datetime import datetime
-from typing import Any, Literal
+from typing import Any, Literal, TypedDict
 
-from ninja import Schema
-from pydantic import ConfigDict, Field, field_validator
+from dmr.pagination import Paginated
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 type UserID = int
 type MessageID = int
@@ -18,7 +18,7 @@ def _field(description: str, **kwargs: Any) -> Any:
     return Field(**kwargs)
 
 
-class UserOutSchema(Schema):
+class UserOutSchema(BaseModel):
     """Full user profile."""
 
     model_config = ConfigDict(from_attributes=True)
@@ -33,7 +33,7 @@ class UserOutSchema(Schema):
     is_active: bool = _field("Active flag", default=True)
 
 
-class UserCreateIn(Schema):
+class UserCreateIn(BaseModel):
     """Input for creating a user."""
 
     username: str = _field(
@@ -52,7 +52,7 @@ class UserCreateIn(Schema):
     patronymic: str | None = _field("Patronymic", default=None)
 
 
-class UserUpdateIn(Schema):
+class UserUpdateIn(BaseModel):
     """Input for partial user update."""
 
     username: str | None = _field(
@@ -69,21 +69,7 @@ class UserUpdateIn(Schema):
     is_active: bool | None = _field("Active flag", default=None)
 
 
-class UserLoginIn(Schema):
-    """Input for login."""
-
-    username: str = _field("Username")
-    password: str = _field("Password")
-
-
-class UserTokenOut(Schema):
-    """JWT token response."""
-
-    access_token: str = _field("JWT access token")
-    token_type: Literal["Bearer"] = "Bearer"
-
-
-class MessageIn(Schema):
+class MessageIn(BaseModel):
     """Input for creating a message."""
 
     content: str = _field(
@@ -93,7 +79,7 @@ class MessageIn(Schema):
     )
 
 
-class MessageOut(Schema):
+class MessageOut(BaseModel):
     """Message output."""
 
     model_config = ConfigDict(from_attributes=True)
@@ -105,13 +91,13 @@ class MessageOut(Schema):
 
     @field_validator("sender", mode="before")
     @classmethod
-    def _sender_to_username(cls, value: object) -> object:
-        if hasattr(value, "username"):
-            return value.username
-        return value
+    def _sender_to_username(cls, raw_value: object) -> object:
+        if hasattr(raw_value, "username"):
+            return raw_value.username
+        return raw_value
 
 
-class PhotoOut(Schema):
+class PhotoOut(BaseModel):
     """User photo output."""
 
     model_config = ConfigDict(from_attributes=True)
@@ -119,3 +105,43 @@ class PhotoOut(Schema):
     id: PhotoID = _field("Photo ID")
     image: str = _field("Image URL")
     user_id: UserID = _field("Photo owner")
+
+
+class PageQuery(BaseModel):
+    """Query parameters for paginated collections."""
+
+    page: int = _field("Page number, starting from 1", default=1, ge=1)
+    page_size: int = _field("Items per page", default=10, ge=1, le=100)
+
+
+class MessagePageQuery(PageQuery):
+    """Query parameters for the message list."""
+
+    search: str | None = _field("Full-text search", default=None)
+    sort: Literal["asc", "desc"] = _field("Sort order", default="desc")
+
+
+class PhotoUploadMeta(BaseModel):
+    """Metadata for a single uploaded photo."""
+
+    name: str = _field("File name")
+    content_type: str = _field("MIME type")
+    size: int = _field("File size in bytes")
+
+
+class PhotosUpload(TypedDict):
+    """Metadata for the multipart photo upload."""
+
+    image: PhotoUploadMeta
+
+
+class UsersPage(Paginated[UserOutSchema]):
+    """Paginated user list."""
+
+
+class MessagesPage(Paginated[MessageOut]):
+    """Paginated message list."""
+
+
+class PhotosPage(Paginated[PhotoOut]):
+    """Paginated photo list."""

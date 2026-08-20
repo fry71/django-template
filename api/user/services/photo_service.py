@@ -21,17 +21,17 @@ def photo_queryset(user_id: int) -> QuerySet[Photo]:
     return Photo.objects.filter(user_id=user_id).order_by("-uploaded_at")
 
 
-async def create_photo(user_id: int, file: UploadedFile) -> Photo:
+async def create_photo(user_id: int, uploaded: UploadedFile) -> Photo:
     """Create a photo record — simple write (single INSERT)."""
-    content_type = file.content_type or ""
+    content_type = uploaded.content_type or ""
     if not content_type.startswith("image/"):
         msg = "Only image files are allowed"
         raise ValidationError(msg, fields={"image": [msg]})
 
-    if file.size > _MAX_PHOTO_SIZE:
+    if uploaded.size > _MAX_PHOTO_SIZE:
         msg = "File size must not exceed 5MB"
         raise ValidationError(msg, fields={"image": [msg]})
 
-    photo = await Photo.objects.acreate(user_id=user_id, image=file)
+    photo = await Photo.objects.acreate(user_id=user_id, image=uploaded)
     logger.info("Photo created: %s", photo.id)
     return photo

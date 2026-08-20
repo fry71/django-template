@@ -6,7 +6,7 @@ from django.contrib.auth.admin import UserAdmin as BaseUserAdmin
 from django.utils.html import format_html
 from django.utils.translation import gettext_lazy as _
 
-from .models import Message, Photo, User
+from api.user.models import Message, Photo, User
 
 
 @admin.register(User)
@@ -84,11 +84,11 @@ class MessageAdmin(admin.ModelAdmin):
     def content_preview(self, obj: Message) -> str:
         """Return preview of message content."""
         preview_length = 50
-        return (
-            obj.content[:preview_length] + "..."
-            if len(obj.content) > preview_length
-            else obj.content
-        )
+        content = obj.content
+        if len(content) <= preview_length:
+            return content
+        preview = content[:preview_length]
+        return f"{preview}..."
 
     content_preview.short_description = _("Content preview")
 

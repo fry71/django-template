@@ -1,0 +1,39 @@
+[flake8]
+max-line-length = 90
+select = WPS
+exclude =
+    .git,
+    __pycache__,
+    .venv,
+    migrations,
+    tests,
+    tasks/test_tasks.py,
+    staticfiles,
+    logs,
+    node_modules,
+    bot,
+    api/config
+# Why certain paths are excluded:
+#   tests, tasks/test_tasks.py - test suites; WPS is not enforced there
+#   api/config             - Django settings modules; module-level mutable
+#                            constants (INSTALLED_APPS, MIDDLEWARE, ...) are
+#                            the required Django idiom -> WPS407 false positives
+#   bot                    - separate gateway component (uses dotted raw import)
+# Rules allowed by project policy (see README / AGENTS.md):
+#   WPS110 - generic/domain names are standard in Django models/schemas
+#   WPS115 - REQUIRED_FIELDS / other uppercase class constants are a Django idiom
+#   WPS201 - too many imports in router/aggregator modules
+#   WPS202 - too many module members in schema/router modules
+#   WPS226 - string literal over-use
+#   WPS235 - too many imported names from one module
+#   WPS432 - magic numbers for max_length / HTTP statuses
+#   WPS476 - serial async retry loops legitimately await inside a for loop
+ignore =
+    WPS110,
+    WPS115,
+    WPS201,
+    WPS202,
+    WPS226,
+    WPS235,
+    WPS432,
+    WPS476

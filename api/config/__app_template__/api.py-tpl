@@ -1,12 +1,19 @@
 from __future__ import annotations
 
-from ninja import Router
+from http import HTTPStatus
 
-from api.common.schemas import ErrorSchema
+from dmr import Controller, ResponseSpec
+from dmr.errors import ErrorModel
+from dmr.plugins.pydantic import PydanticSerializer
 
-router = Router()
+from api.{{ app_name }}.schema import {{ camel_case_app_name }}Out
 
 
-@router.get("/", response={200: str, 400: ErrorSchema})
-def index(request):
-    return "{{ app_name }} API"
+class {{ camel_case_app_name }}Controller(Controller[PydanticSerializer]):
+    """Root controller for the {{ app_name }} app."""
+
+    responses = [ResponseSpec(ErrorModel, status_code=HTTPStatus.BAD_REQUEST)]
+
+    async def get(self) -> {{ camel_case_app_name }}Out:
+        """Return a sample payload."""
+        return {{ camel_case_app_name }}Out(id=1, message="{{ app_name }} API")
