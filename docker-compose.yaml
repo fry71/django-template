@@ -1,59 +1,99 @@
-# docker-compose.yml
-version: '3.8'
+# docker-compose.yaml
+name: django-gateway
 
 services:
-  web:
-    build: .
-    ports:
-      - "8000:8000"
-    environment:
-      - DEBUG=true
-      - DATABASE_URL=postgres://user:password@db:5432/django_gateway
-      - REDIS_URL=redis://redis:6379/0
-      - JWT_SECRET_KEY=development-jwt-secret-key
-    volumes:
-      - .:/application
-      - static_volume:/application/staticfiles
-      - media_volume:/application/media
-    depends_on:
-      - db
-      - redis
-    command: >
-      sh -c "uv run python manage.py migrate &&
-             uv run python manage.py collectstatic --noinput &&
-             uv run python manage.py runserver 0.0.0.0:8000"
-
-  worker:
-    build: .
-    environment:
-      - DEBUG=true
-      - DATABASE_URL=postgres://user:password@db:5432/django_gateway
-      - REDIS_URL=redis://redis:6379/0
-    volumes:
-      - .:/application
-    depends_on:
-      - db
-      - redis
-    command: uv run taskiq worker tasks.broker:broker
-
   db:
     image: postgres:15
     environment:
       POSTGRES_DB: django_gateway
-      POSTGRES_USER: user
-      POSTGRES_PASSWORD: password
+      POSTGRES_USER: django
+      POSTGRES_PASSWORD: django
+    expose:
+      - "5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
-    ports:
-      - "5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U django -d django_gateway"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
 
   redis:
     image: valkey/valkey:7.2
-    ports:
-      - "6379:6379"
     command: valkey-server --appendonly yes
+    expose:
+      - "6379"
     volumes:
       - redis_data:/data
+    healthcheck:
+      test: ["CMD", "valkey-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  web:
+    build: .
+    ports:
+      - "8000:8000"
+    environment: &app-env
+      DJANGO_SETTINGS_MODULE: api.config.settings
+      DJANGO_DEBUG: "true"
+      DJANGO_SECRET_KEY: compose-dev-django-secret-key
+      JWT_SECRET_KEY: compose-dev-jwt-secret-key-for-hs256-signing
+      DATABASE_URL: postgres://django:django@db:5432/django_gateway
+      REDIS_URL: redis://redis:6379/0
+      TASKIQ_REDIS_URL: redis://redis:6379/3
+      TASKIQ_IN_MEMORY: "false"
+      USE_REDIS_FOR_CACHE: "true"
+    volumes:
+      - .:/application
+      - /application/.venv # keep the image-built venv (masks host .venv)
+      - static_volume:/application/staticfiles
+      - media_volume:/application/media
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    command: >
+      sh -c "make migrate &&
+             make collectstatic &&
+             make run.server.prod"
+
+  worker:
+    build: .
+    environment:
+      <<: *app-env
+    volumes:
+      - .:/application
+      - /application/.venv
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    healthcheck:
+      disable: true
+    command: taskiq worker tasks.broker:broker
+
+  test:
+    build: .
+    profiles: ["test"]
+    environment:
+      <<: *app-env
+      TASKIQ_IN_MEMORY: "true"
+      USE_REDIS_FOR_CACHE: "false"
+    volumes:
+      - .:/application
+      - /application/.venv
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    healthcheck:
+      disable: true
+    command: pytest tests/ -q
 
 volumes:
   postgres_data:

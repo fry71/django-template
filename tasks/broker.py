@@ -57,6 +57,11 @@ def create_broker() -> InMemoryBroker | ListQueueBroker:
         broker = ListQueueBroker(
             redis_url,
             queue_name="taskiq",
+            # brpop blocks until a message arrives; the redis-py default of
+            # 5s (DEFAULT_SOCKET_TIMEOUT) would kill the idle worker with
+            # TimeoutError. Keepalive keeps stale connections from hanging.
+            socket_timeout=None,
+            socket_keepalive=True,
         ).with_result_backend(RedisAsyncResultBackend(redis_url))
     except Exception:
         logger.exception("Failed to create Redis broker")

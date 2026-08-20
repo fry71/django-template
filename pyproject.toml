@@ -26,6 +26,7 @@ dependencies = [
     "pydantic>=2.12",
     "uvicorn[standard]",
     "uvicorn_worker",
+    "gunicorn",
     "django-cacheops",
     "django-cors-headers",
     "split_settings",
@@ -35,27 +36,22 @@ dependencies = [
     "django-split-settings",
     "colorlog",
     "twisted",
-    
     # Async & Task Queue
     "channels",
     "channels-redis",
     "taskiq",
     "taskiq-redis",
-
     # API
     "django-modern-rest[msgspec,pydantic,jwt,openapi]",
     "pyjwt[crypto]",
     "aiogram",
-    
     # Database
     "psycopg[binary,pool]",
     "dj-database-url",
     "django-redis",
-    
     # AI Integration
-#    "llama-index",
-#    "openai",
-    
+    #    "llama-index",
+    #    "openai",
     # Utilities
     "python-dotenv>=1.0.0",
     "django-axes",
@@ -78,6 +74,7 @@ dev = [
     "ruff>=0.2.0",
     "pylint>=3.0.1",
     "mypy",
+    "ty",
     # Testing
     "pytest>=8.0.0",
     "pytest-asyncio>=0.23.0",
@@ -103,16 +100,6 @@ dev = [
 ]
 
 [tool.uv.sources]
-
-[flake8]
-max-line-length = 90  # Рекомендуется для совместимости с black/ruff
-select = "WPS"  # Включаем только правила wemake
-exclude = [
-    ".git",
-    "__pycache__",
-    "migrations",  # Исключаем миграции, они генерируются автоматически
-    ".venv"
-]
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
@@ -143,6 +130,26 @@ ignore_missing_imports = true
 [tool.django-stubs]
 django_settings_module = "api.config.settings"
 strict_settings = false  # Settings are split across api/config/*.py modules
+
+# ty uses django-stubs .pyi from the venv. It has no mypy Django plugin.
+[tool.ty.environment]
+python-version = "3.14"
+root = ["./"]
+
+[tool.ty.src]
+exclude = [
+    "**/migrations/**",
+    "tests/**",
+]
+
+[tool.ty.terminal]
+error-on-warning = false
+
+[tool.ty.rules]
+# Model.objects / DoesNotExist / AUTH_USER_MODEL need a Django plugin.
+unresolved-attribute = "ignore"
+invalid-type-form = "ignore"
+invalid-method-override = "ignore"
 
 [tool.ruff]
 exclude = [
@@ -200,3 +207,7 @@ ignore = [
     "TC003",  # datetime must be imported at runtime for pydantic model building
 ]
 "main.py" = ["T201"]
+"api/web/asgi.py" = ["E402"]  # routing imported after Django setup
+"api/common/controllers.py" = ["ARG002"]  # DMR passes endpoint/controller by contract
+"api/user/api.py" = ["TC002", "ARG002"]  # DMR runtime types / framework args
+"api/config/cache.py" = ["TRY301"]  # raise inside try to fall back to dummy cache

@@ -47,6 +47,21 @@ api/
 
 ## Quick Start
 
+### 0. Run with Docker Compose (web + worker + Postgres + Valkey)
+```bash
+docker compose up -d        # build & start the full stack
+curl http://127.0.0.1:8000/health/   # {"status":"ok"}
+docker compose run --rm test # run the test suite against Postgres
+docker compose down          # stop (add -v to also drop volumes)
+```
+`docker compose up` starts `web` (gunicorn + `uvicorn_worker`, auto-runs `migrate` +
+`collectstatic`), `worker` (Taskiq consumer), `db` and `redis`. Static and media files
+are served by Django itself via async ASGI handlers (`serve_static` / `serve_media`),
+so no separate static server is needed in dev. `db` and `redis` are only reachable
+inside the compose network — only `web` publishes port 8000, so nothing conflicts with
+a local Postgres/Valkey. The `test` service has its own profile and runs on demand
+(see above).
+
 ### 1. Create `.env`
 ```bash
 cp .env.example .env
@@ -108,12 +123,21 @@ The chat page (`/chat/`) is a classic Django form + template page authenticated 
 USE_REDIS_FOR_CACHE=false TASKIQ_IN_MEMORY=true DJANGO_SETTINGS_MODULE=api.config.settings uv run pytest tests/ -q
 ```
 
+## CI (GitHub Actions)
+`.github/workflows/ci.yml` runs on every push to `main` and on pull requests:
+- **Lint** — `ruff check .` + `flake8 .` (wemake-python-styleguide) + `black --check` + `ty check`.
+- **Tests (sqlite)** — full pytest suite on SQLite.
+- **Tests (postgres)** — full pytest suite against a Postgres 15 service container, mirroring production database behavior.
+
 ## Linting
+Configured in `.flake8` (wemake-python-styleguide) and `pyproject.toml` (ruff/black):
 - **ruff** — `uv run ruff check .`
-- **black** — `uv run black --check api/`
-- **wemake-python-styleguide (flake8)** — `uv run flake8 --max-line-length=90 --select=WPS api/`
-  - Allowed exceptions: `WPS226` (string over-use), `WPS432` (magic numbers for `max_length`/HTTP statuses), `WPS110` (standard domain names).
-- **mypy** — `uv run mypy api/`
+- **black** — `uv run black --check api tasks tests main.py manage.py`
+- **wemake-python-styleguide (flake8)** — `uv run flake8 .` (uses `.flake8`)
+  - Excluded: `tests`, `migrations`, `api/config` (Django settings — `WPS407` false positives), `bot`.
+  - Allowed exceptions: `WPS110` (domain names), `WPS115` (Django class constants), `WPS201`/`WPS202`/`WPS235` (module import sizes), `WPS226` (string over-use), `WPS432` (magic numbers for `max_length`/HTTP statuses), `WPS476` (serial async retry loops).
+- **ty** — `uv run ty check api tasks main.py manage.py` (uses `django-stubs` `.pyi` from the venv; no mypy plugin).
+- **mypy** — `uv run mypy api/` (`django-stubs` plugin for ORM: `Model.objects`, `AUTH_USER_MODEL`).
 
 ## Performance benefits
 - Async Django — non-blocking I/O operations

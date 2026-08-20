@@ -30,8 +30,8 @@ class BaseAsyncController(Controller[PydanticSerializer]):
 
     async def handle_async_error(
         self,
-        endpoint: Endpoint,  # noqa: ARG002 - DMR passes it by contract
-        controller: Controller[PydanticSerializer],  # noqa: ARG002
+        endpoint: Endpoint,  # DMR passes it by contract
+        controller: Controller[PydanticSerializer],
         exc: Exception,
     ) -> HttpResponse:
         """Convert a DomainError into an ErrorModel response."""

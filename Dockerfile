@@ -26,10 +26,15 @@ WORKDIR /application
 # Установка системных зависимостей
 RUN apt-get update && apt-get install -y \
     libpq-dev \
+    curl \
+    make \
     && rm -rf /var/lib/apt/lists/*
 
 # Копируем зависимости из builder
 COPY --from=builder /application/.venv /application/.venv
+
+# Копируем uv из builder (используется в dev-compose командах)
+COPY --from=builder /usr/local/bin/uv /usr/local/bin/uv
 
 # Копируем проект
 COPY . .
@@ -47,4 +52,4 @@ EXPOSE 8000
 HEALTHCHECK --interval=30s --timeout=30s --start-period=5s --retries=3 \
     CMD curl -f http://localhost:8000/health/ || exit 1
 
-CMD ["uv", "run", "gunicorn", "api.web.asgi:application", "--bind", "0.0.0.0:8000", "--worker-class", "uvicorn_worker.UvicornWorker"]
+CMD ["gunicorn", "api.web.asgi:application", "--bind", "0.0.0.0:8000", "--worker-class", "uvicorn_worker.UvicornWorker"]

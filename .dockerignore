@@ -21,3 +21,4 @@ Thumbs.db
 media/
 staticfiles/
 .volumes/
+.venv/

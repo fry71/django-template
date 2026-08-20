@@ -18,12 +18,12 @@ os.environ.setdefault("DJANGO_SETTINGS_MODULE", "api.config.settings")
 # Django application (must be created before importing app modules)
 django_application = get_asgi_application()
 
-from api.web import routing  # noqa: E402 - app modules load after Django setup
+from api.web import routing  # app modules load after Django setup
 
 
-def _is_media_request(scope: dict[str, Any]) -> bool:
-    """Check whether the scope is an HTTP media request."""
-    return scope["type"] == "http" and scope["path"].startswith(settings.MEDIA_URL)
+def _is_file_request(scope: dict[str, Any], url_prefix: str) -> bool:
+    """Check whether the scope is an HTTP request under a URL prefix."""
+    return scope["type"] == "http" and scope["path"].startswith(url_prefix)
 
 
 async def _send_response(
@@ -48,26 +48,33 @@ async def _send_response(
     )
 
 
-async def serve_media(scope: dict[str, Any], receive: Any, send: Any) -> None:
-    """Async function to serve media files."""
-    if not _is_media_request(scope):
-        return await django_application(scope, receive, send)
+async def _serve_file_from_root(
+    scope: dict[str, Any],
+    receive: Any,
+    send: Any,
+    url_prefix: str,
+    root: str,
+) -> None:
+    """Serve a file from a directory root without hitting Django."""
+    if not _is_file_request(scope, url_prefix):
+        await django_application(scope, receive, send)
+        return
 
-    file_path = scope["path"].replace(settings.MEDIA_URL, "", 1)
-    full_path = Path(settings.MEDIA_ROOT) / file_path
+    file_path = scope["path"].replace(url_prefix, "", 1)
+    full_path = Path(root) / file_path
 
     if not full_path.exists() or not full_path.is_file():
         await _send_response(send, 404, "text/plain", b"File not found")
-        return None
+        return
 
     content_type = mimetypes.guess_type(full_path)[0] or "application/octet-stream"
 
     try:
-        async with aiofiles.open(full_path, "rb") as media_file:
-            file_bytes = await media_file.read()
+        async with aiofiles.open(full_path, "rb") as file:
+            file_bytes = await file.read()
     except OSError:
         await _send_response(send, 500, "text/plain", b"Internal server error")
-        return None
+        return
 
     await _send_response(
         send,
@@ -75,7 +82,28 @@ async def serve_media(scope: dict[str, Any], receive: Any, send: Any) -> None:
         content_type,
         file_bytes,
     )
-    return None
+
+
+async def serve_media(scope: dict[str, Any], receive: Any, send: Any) -> None:
+    """Serve media files without Django."""
+    await _serve_file_from_root(
+        scope,
+        receive,
+        send,
+        settings.MEDIA_URL,
+        settings.MEDIA_ROOT,
+    )
+
+
+async def serve_static(scope: dict[str, Any], receive: Any, send: Any) -> None:
+    """Serve static files without Django."""
+    await _serve_file_from_root(
+        scope,
+        receive,
+        send,
+        settings.STATIC_URL,
+        settings.STATIC_ROOT,
+    )
 
 
 application = ProtocolTypeRouter(
@@ -83,6 +111,7 @@ application = ProtocolTypeRouter(
         "http": URLRouter(
             [
                 path("media/<path:path>", serve_media),
+                path("static/<path:path>", serve_static),
                 re_path(r"", django_application),
             ],
         ),

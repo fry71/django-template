@@ -7,7 +7,7 @@ on:
 
 jobs:
   lint:
-    name: Lint (ruff + black)
+    name: Lint (ruff + black + ty)
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
@@ -30,11 +30,51 @@ jobs:
       - name: Check formatting with black
         run: uv run black --check api tasks tests main.py manage.py
 
+      - name: Typecheck with ty
+        run: uv run ty check api tasks main.py manage.py
+
   test:
-    name: Tests (pytest)
+    name: Tests (pytest, sqlite)
     runs-on: ubuntu-latest
     env:
       DJANGO_SETTINGS_MODULE: api.config.settings
+      USE_REDIS_FOR_CACHE: "false"
+      TASKIQ_IN_MEMORY: "true"
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install uv
+        run: |
+          curl -LsSf https://astral.sh/uv/install.sh | sh
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+
+      - name: Install dependencies
+        run: uv sync --frozen
+
+      - name: Run tests
+        run: uv run pytest -q
+
+  test-postgres:
+    name: Tests (pytest, postgres)
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:15
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: postgres
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    env:
+      DJANGO_SETTINGS_MODULE: api.config.settings
+      DATABASE_URL: postgres://postgres:postgres@localhost:5432/postgres
       USE_REDIS_FOR_CACHE: "false"
       TASKIQ_IN_MEMORY: "true"
     steps:

@@ -3,19 +3,16 @@ from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
 from http import HTTPStatus
-from math import ceil
-from typing import TYPE_CHECKING, TypedDict, cast
+from typing import TypedDict
 
 from django.conf import settings
-from django.db.models import Model
 from dmr import modify
-from dmr.components import (  # noqa: TC002 - DMR resolves these at runtime
+from dmr.components import (  # DMR resolves these at runtime
     Body,
     FileMetadata,
     Path,
     Query,
 )
-from dmr.pagination import Page
 from dmr.parsers import MultiPartParser
 from dmr.plugins.pydantic import PydanticSerializer
 from dmr.security.jwt import JWTAsyncAuth
@@ -33,23 +30,24 @@ from api.common.exceptions import (
     PermissionDeniedError,
     UnauthorizedError,
 )
+from api.common.pagination import build_page, paginate
 from api.common.schemas import OperationResultSchema
 from api.user import schema
 from api.user.models import User
 from api.user.services import message_service, photo_service, user_service
 
-if TYPE_CHECKING:
-    from collections.abc import Sequence
 
-    from django.db.models import QuerySet
+def _access_lifetime_minutes() -> int:
+    """Return the JWT access-token lifetime in minutes (lazy settings read)."""
+    return settings.JWT_ACCESS_TOKEN_LIFETIME
 
 
+# JWTAsyncAuth binds settings at import time; api.user.api must therefore be
+# imported only after Django has configured the app registry (see api.web.asgi).
 JWT_AUTH = JWTAsyncAuth(
     secret=settings.JWT_SECRET_KEY,
     algorithm=settings.JWT_ALGORITHM,
 )
-
-_ACCESS_LIFETIME_MINUTES = settings.JWT_ACCESS_TOKEN_LIFETIME
 
 
 class _UserIdPath(TypedDict):
@@ -87,7 +85,7 @@ class ObtainAccessAndRefreshController(
         now = datetime.now(UTC)
         return {
             "access_token": self.create_jwt_token(
-                expiration=now + timedelta(minutes=_ACCESS_LIFETIME_MINUTES),
+                expiration=now + timedelta(minutes=_access_lifetime_minutes()),
                 token_type="access",
             ),
             "refresh_token": self.create_jwt_token(
@@ -117,7 +115,7 @@ class RefreshAccessAndRefreshController(
         now = datetime.now(UTC)
         return {
             "access_token": self.create_jwt_token(
-                expiration=now + timedelta(minutes=_ACCESS_LIFETIME_MINUTES),
+                expiration=now + timedelta(minutes=_access_lifetime_minutes()),
                 token_type="access",
             ),
             "refresh_token": self.create_jwt_token(
@@ -125,22 +123,6 @@ class RefreshAccessAndRefreshController(
                 token_type="refresh",
             ),
         }
-
-
-async def page_items[TItem: Model](
-    queryset: QuerySet[TItem],
-    page: int,
-    page_size: int,
-) -> tuple[Sequence[TItem], int, int]:
-    """Slice an async queryset into a page plus count metadata."""
-    count = await queryset.acount()
-    num_pages = max(1, ceil(count / page_size))
-    safe_page = min(page, num_pages)
-    offset = (safe_page - 1) * page_size
-    records: Sequence[TItem] = [
-        record async for record in queryset[offset : offset + page_size]
-    ]
-    return records, count, num_pages
 
 
 def _current_user(controller: BaseAsyncController) -> User:
@@ -158,7 +140,7 @@ class UserListController(BaseAsyncController):
     @modify(auth=(JWT_AUTH,))
     async def get(self, parsed_query: Query[schema.PageQuery]) -> schema.UsersPage:
         """Paginated user list."""
-        records, count, num_pages = await page_items(
+        records, info = await paginate(
             user_service.user_queryset(),
             parsed_query.page,
             parsed_query.page_size,
@@ -167,11 +149,12 @@ class UserListController(BaseAsyncController):
             schema.UserOutSchema.model_validate(user, from_attributes=True)
             for user in records
         ]
-        return schema.UsersPage(
-            count=count,
-            num_pages=num_pages,
-            per_page=parsed_query.page_size,
-            page=Page(number=min(parsed_query.page, num_pages), object_list=users),
+        return build_page(
+            schema.UsersPage,
+            users,
+            info,
+            parsed_query.page,
+            parsed_query.page_size,
         )
 
     @modify(status_code=HTTPStatus.CREATED)
@@ -249,7 +232,7 @@ class MessageListController(BaseAsyncController):
         parsed_query: Query[schema.MessagePageQuery],
     ) -> schema.MessagesPage:
         """Paginated message list with optional search."""
-        records, count, num_pages = await page_items(
+        records, info = await paginate(
             message_service.message_queryset(
                 search=parsed_query.search,
                 sort=parsed_query.sort,
@@ -258,19 +241,15 @@ class MessageListController(BaseAsyncController):
             parsed_query.page_size,
         )
         messages = [
-            schema.MessageOut(
-                id=message.id,
-                content=cast("str", message.content),
-                timestamp=cast("datetime", message.timestamp),
-                sender=cast("str", cast("User", message.sender).username),
-            )
+            schema.MessageOut.model_validate(message, from_attributes=True)
             for message in records
         ]
-        return schema.MessagesPage(
-            count=count,
-            num_pages=num_pages,
-            per_page=parsed_query.page_size,
-            page=Page(number=min(parsed_query.page, num_pages), object_list=messages),
+        return build_page(
+            schema.MessagesPage,
+            messages,
+            info,
+            parsed_query.page,
+            parsed_query.page_size,
         )
 
     @modify(status_code=HTTPStatus.CREATED)
@@ -281,12 +260,8 @@ class MessageListController(BaseAsyncController):
             user.id,
             parsed_body.content,
         )
-        return schema.MessageOut(
-            id=message.id,
-            content=cast("str", message.content),
-            timestamp=cast("datetime", message.timestamp),
-            sender=cast("str", user.username),
-        )
+        message.sender = user
+        return schema.MessageOut.model_validate(message, from_attributes=True)
 
 
 class MessageDetailController(BaseAsyncController):
@@ -321,30 +296,29 @@ class PhotoListController(BaseAsyncController):
 
     async def get(self, parsed_query: Query[schema.PageQuery]) -> schema.PhotosPage:
         """List photos for the current user."""
-        records, count, num_pages = await page_items(
+        records, info = await paginate(
             photo_service.photo_queryset(_current_user(self).id),
             parsed_query.page,
             parsed_query.page_size,
         )
         photos = [
-            schema.PhotoOut(
-                id=photo.id,
-                image=photo.image.url if photo.image else "",
-                user_id=photo.user_id,
-            )
+            schema.PhotoOut.model_validate(photo, from_attributes=True)
             for photo in records
         ]
-        return schema.PhotosPage(
-            count=count,
-            num_pages=num_pages,
-            per_page=parsed_query.page_size,
-            page=Page(number=min(parsed_query.page, num_pages), object_list=photos),
+        return build_page(
+            schema.PhotosPage,
+            photos,
+            info,
+            parsed_query.page,
+            parsed_query.page_size,
         )
 
     @modify(status_code=HTTPStatus.CREATED)
     async def post(
         self,
-        parsed_file_metadata: FileMetadata[schema.PhotosUpload],  # noqa: ARG002
+        parsed_file_metadata: FileMetadata[
+            schema.PhotosUpload
+        ],  # DMR passes it by contract
     ) -> schema.PhotoOut:
         """Upload a photo for the current user."""
         uploaded = self.request.FILES.get("image")
@@ -352,8 +326,4 @@ class PhotoListController(BaseAsyncController):
             msg = "No image file provided"
             raise NotFoundError(msg)
         photo = await photo_service.create_photo(_current_user(self).id, uploaded)
-        return schema.PhotoOut(
-            id=photo.id,
-            image=photo.image.url if photo.image else "",
-            user_id=photo.user_id,
-        )
+        return schema.PhotoOut.model_validate(photo, from_attributes=True)

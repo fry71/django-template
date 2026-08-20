@@ -106,6 +106,13 @@ class PhotoOut(BaseModel):
     image: str = _field("Image URL")
     user_id: UserID = _field("Photo owner")
 
+    @field_validator("image", mode="before")
+    @classmethod
+    def _image_to_url(cls, raw_value: object) -> object:
+        if hasattr(raw_value, "url"):
+            return raw_value.url
+        return raw_value
+
 
 class PageQuery(BaseModel):
     """Query parameters for paginated collections."""

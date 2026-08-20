@@ -58,7 +58,7 @@ def send_message(request: HttpRequest) -> JsonResponse:
     return JsonResponse(_message_payload(message), status=201)
 
 
-async def _message_events(request: HttpRequest) -> AsyncIterator[str]:
+async def _message_events(request: HttpRequest) -> AsyncIterator[bytes]:
     """Yield new chat messages as Server-Sent Events for a client."""
     last_id = int(
         request.META.get("HTTP_LAST_EVENT_ID") or request.GET.get("last_id") or 0,
@@ -77,9 +77,11 @@ async def _message_events(request: HttpRequest) -> AsyncIterator[str]:
                 {"message": message},
             ).content.decode("utf-8")
             payload = json.dumps({"id": message.id, "html": html})
-            yield f"id: {message.id}\nevent: message\ndata: {payload}\n\n"
+            yield (
+                f"id: {message.id}\nevent: message\ndata: {payload}\n\n"
+            ).encode()
             last_id = message.id
-        yield ": keep-alive\n\n"
+        yield b": keep-alive\n\n"
         await asyncio.sleep(_MESSAGE_POLL_SECONDS)
 
 

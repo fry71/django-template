@@ -33,6 +33,9 @@ if USE_REDIS_FOR_CACHE:
         # "auth.permission": {"ops": "all", "timeout": 60 * 60},
         # "auth.*": {"ops": ("fetch", "get"), "timeout": 60 * 60},
         "*.*": {"ops": "all", "timeout": 60 * 15},
+        # Never cache Django's internal migration recorder: it is not an
+        # installed app label, so unpickling its cached rows raises LookupError.
+        "migrations.*": None,
     }
 
     CACHEOPS_DEGRADE_ON_FAILURE = True
@@ -53,7 +56,7 @@ if USE_REDIS_FOR_CACHE:
 
         if cache.get("ping") != "pong":
             msg = "Cache is not working properly."
-            raise ValueError(msg)  # noqa: TRY301
+            raise ValueError(msg)
 
         cache.delete("ping")
         logger.info("Cache is working properly")
