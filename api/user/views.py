@@ -7,19 +7,23 @@ import json
 from typing import TYPE_CHECKING
 
 from django.contrib.auth.decorators import login_required
+from django.core.exceptions import PermissionDenied
 from django.http import HttpRequest, HttpResponse, JsonResponse, StreamingHttpResponse
 from django.shortcuts import render
 from django.views.decorators.http import require_GET, require_POST
 
 from api.user.forms import MessageForm
-from api.user.models import Message
+from api.user.models import ChatRoom, Message, RoomMembership
 
 if TYPE_CHECKING:
     from collections.abc import AsyncIterator
 
+    from django.contrib.auth.models import AbstractUser
+
 _MESSAGE_PARTIAL = "chat/chat.html#message-item"
 _MESSAGE_POLL_SECONDS = 1.0
 _RECENT_MESSAGE_LIMIT = 50
+_DEFAULT_ROOM_NAME = "general"
 
 
 def _message_payload(message: Message) -> dict[str, str | int]:
@@ -32,10 +36,26 @@ def _message_payload(message: Message) -> dict[str, str | int]:
     }
 
 
+def _default_room(user: AbstractUser) -> ChatRoom:
+    """Return the shared default room, creating it and the membership once."""
+    room = ChatRoom.objects.order_by("id").first()
+    if room is None:
+        room = ChatRoom.objects.create(
+            name=_DEFAULT_ROOM_NAME,
+            created_by_id=user.pk,
+        )
+    RoomMembership.objects.get_or_create(room=room, user_id=user.pk)
+    return room
+
+
 @login_required
 def chat_view(request: HttpRequest) -> HttpResponse:
     """Render the chat page with the message form and recent messages."""
-    recent_messages = Message.objects.select_related("sender").order_by("-id")
+    recent_messages = (
+        Message.objects.select_related("sender")
+        .filter(room__members=request.user)
+        .order_by("-id")
+    )
     messages = list(
         reversed(list(itertools.islice(recent_messages, _RECENT_MESSAGE_LIMIT))),
     )
@@ -51,8 +71,14 @@ def send_message(request: HttpRequest) -> JsonResponse:
     if not form.is_valid():
         return JsonResponse({"errors": form.errors}, status=400)
 
+    user = request.user
+    if not user.is_authenticated:
+        msg = "Authentication required"
+        raise PermissionDenied(msg)
+    room = _default_room(user)
     message = Message.objects.create(
-        sender_id=request.user.id,
+        sender_id=user.pk,
+        room_id=room.id,
         content=form.cleaned_data["content"],
     )
     return JsonResponse(_message_payload(message), status=201)
@@ -66,7 +92,10 @@ async def _message_events(request: HttpRequest) -> AsyncIterator[bytes]:
     while True:
         fresh = [
             message
-            async for message in Message.objects.filter(id__gt=last_id)
+            async for message in Message.objects.filter(
+                id__gt=last_id,
+                room__members=request.user,
+            )
             .select_related("sender")
             .order_by("id")
         ]
@@ -77,9 +106,7 @@ async def _message_events(request: HttpRequest) -> AsyncIterator[bytes]:
                 {"message": message},
             ).content.decode("utf-8")
             payload = json.dumps({"id": message.id, "html": html})
-            yield (
-                f"id: {message.id}\nevent: message\ndata: {payload}\n\n"
-            ).encode()
+            yield (f"id: {message.id}\nevent: message\ndata: {payload}\n\n").encode()
             last_id = message.id
         yield b": keep-alive\n\n"
         await asyncio.sleep(_MESSAGE_POLL_SECONDS)

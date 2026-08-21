@@ -5,14 +5,39 @@ from __future__ import annotations
 
 import json
 import logging
+import time
 
 import jwt
 from channels.generic.websocket import AsyncWebsocketConsumer
 from django.conf import settings
 
-from api.user.models import Message, User
+from api.user.models import User
+from api.user.services import message_service, room_service
 
 logger = logging.getLogger(__name__)
+
+MAX_CONTENT_LENGTH = 4000
+RATE_LIMIT_MESSAGES = 10
+RATE_LIMIT_WINDOW_SECONDS = 5.0
+
+
+class SlidingWindowRateLimiter:
+    """Per-connection sliding-window rate limiter."""
+
+    def __init__(self, max_messages: int, window_seconds: float) -> None:
+        self._max_messages = max_messages
+        self._window_seconds = window_seconds
+        self._send_times: list[float] = []
+
+    def allows(self) -> bool:
+        """Return whether the current event is within the allowed rate."""
+        now = time.monotonic()
+        window_start = now - self._window_seconds
+        self._send_times = [sent for sent in self._send_times if sent > window_start]
+        if len(self._send_times) >= self._max_messages:
+            return False
+        self._send_times.append(now)
+        return True
 
 
 class ChatConsumer(AsyncWebsocketConsumer):
@@ -23,6 +48,10 @@ class ChatConsumer(AsyncWebsocketConsumer):
         logger.info("WebSocket connecting...")
         if not await self._authenticate():
             return
+        self._rate_limiter = SlidingWindowRateLimiter(
+            max_messages=RATE_LIMIT_MESSAGES,
+            window_seconds=RATE_LIMIT_WINDOW_SECONDS,
+        )
         await self.channel_layer.group_add(self.group_name, self.channel_name)
         await self.accept()
         logger.info("User %s connected to chat", self.user.username)
@@ -61,35 +90,55 @@ class ChatConsumer(AsyncWebsocketConsumer):
             logger.exception("Error sending message to client")
 
     async def _authenticate(self) -> bool:
-        """Authenticate the user from the JWT token in the URL.
+        """Authenticate the user and verify room membership.
 
         Returns whether the connection may proceed.
         """
-        token = self.scope["url_route"]["kwargs"].get("token")
-        if not token:
-            logger.error("No token provided")
+        kwargs = self.scope["url_route"]["kwargs"]
+        token = kwargs.get("token")
+        raw_room_id = kwargs.get("room_id")
+        if not token or not raw_room_id:
+            logger.error("No token or room id provided")
             await self.close()
             return False
+        self.room_id = int(raw_room_id)
         try:
             self.user = await self._resolve_user(token)
         except jwt.InvalidTokenError, User.DoesNotExist, KeyError:
             logger.exception("WebSocket authentication failed")
             await self.close()
             return False
-        self.group_name = "chat_group"
+        if not await room_service.is_member(self.room_id, self.user.id):
+            logger.warning(
+                "User %s is not a member of room %s",
+                self.user.username,
+                self.room_id,
+            )
+            await self.close()
+            return False
+        self.group_name = f"chat_{self.room_id}"
         return True
 
     async def _resolve_user(self, token: str) -> User:
-        """Resolve a user from a valid JWT token."""
+        """Resolve a user from a valid access JWT token."""
         payload = jwt.decode(
             token,
             settings.JWT_SECRET_KEY,
             algorithms=[settings.JWT_ALGORITHM],
         )
+        extras = payload.get("extras", {})
+        token_type = extras.get("type") or payload.get("token_type")
+        if token_type != "access":
+            msg = "Refresh token used for WebSocket auth"
+            raise jwt.InvalidTokenError(msg)
         return await User.objects.aget(id=payload["user_id"])
 
     async def _broadcast_message(self, text_data: str) -> None:
         """Parse a chat message and broadcast it to the group."""
+        if not self._rate_limiter.allows():
+            logger.warning("Rate limit exceeded for user %s", self.user.username)
+            await self.send(text_data=json.dumps({"error": "rate_limited"}))
+            return
         try:
             message_data = json.loads(text_data)
         except json.JSONDecodeError:
@@ -99,7 +148,14 @@ class ChatConsumer(AsyncWebsocketConsumer):
         if not content:
             logger.warning("Received empty message content")
             return
-        message = await Message.objects.acreate(sender=self.user, content=content)
+        if len(content) > MAX_CONTENT_LENGTH:
+            await self.send(text_data=json.dumps({"error": "content_too_long"}))
+            return
+        message = await message_service.create_message(
+            sender_id=self.user.id,
+            room_id=self.room_id,
+            message_content=content,
+        )
         await self.channel_layer.group_send(
             self.group_name,
             {

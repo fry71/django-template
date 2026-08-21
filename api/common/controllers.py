@@ -14,7 +14,7 @@ if TYPE_CHECKING:
     from django.http import HttpResponse
     from dmr.endpoint import Endpoint
 
-_ERROR_RESPONSES = (
+ERROR_RESPONSES = (
     ResponseSpec(ErrorModel, status_code=HTTPStatus.BAD_REQUEST),
     ResponseSpec(ErrorModel, status_code=HTTPStatus.UNAUTHORIZED),
     ResponseSpec(ErrorModel, status_code=HTTPStatus.FORBIDDEN),
@@ -23,10 +23,8 @@ _ERROR_RESPONSES = (
 )
 
 
-class BaseAsyncController(Controller[PydanticSerializer]):
-    """Async controller mapping domain errors to structured responses."""
-
-    responses = _ERROR_RESPONSES
+class DomainErrorMixin:
+    """Mixin mapping domain errors to structured responses."""
 
     async def handle_async_error(
         self,
@@ -36,7 +34,7 @@ class BaseAsyncController(Controller[PydanticSerializer]):
     ) -> HttpResponse:
         """Convert a DomainError into an ErrorModel response."""
         if isinstance(exc, DomainError):
-            return self.to_error(
+            return self.to_error(  # type: ignore[attr-defined]
                 format_error(
                     exc.detail,
                     loc=["body"],
@@ -45,3 +43,9 @@ class BaseAsyncController(Controller[PydanticSerializer]):
                 status_code=HTTPStatus(exc.status_code),
             )
         raise exc
+
+
+class BaseAsyncController(DomainErrorMixin, Controller[PydanticSerializer]):
+    """Async controller mapping domain errors to structured responses."""
+
+    responses = ERROR_RESPONSES

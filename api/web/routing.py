@@ -8,18 +8,24 @@ from dmr.routing import Router, path
 
 from api.user import consumers
 from api.user.api import (
+    DirectRoomController,
     MeController,
     MessageDetailController,
     MessageListController,
     ObtainAccessAndRefreshController,
     PhotoListController,
     RefreshAccessAndRefreshController,
+    RoomListController,
+    RoomMembershipController,
     UserDetailController,
     UserListController,
 )
 
 websocket_urlpatterns = [
-    re_path(r"ws/chat/(?P<token>[^/]+)/$", consumers.ChatConsumer.as_asgi()),
+    re_path(
+        r"ws/chat/(?P<room_id>\d+)/(?P<token>[^/]+)/$",
+        consumers.ChatConsumer.as_asgi(),
+    ),
 ]
 
 router = Router(
@@ -43,6 +49,17 @@ router = Router(
             "user/messages/<int:message_id>",
             MessageDetailController.as_view(),
             name="message-detail",
+        ),
+        path("user/rooms", RoomListController.as_view(), name="room-list"),
+        path(
+            "user/rooms/direct",
+            DirectRoomController.as_view(),
+            name="room-direct",
+        ),
+        path(
+            "user/rooms/<int:room_id>/membership",
+            RoomMembershipController.as_view(),
+            name="room-membership",
         ),
         path("user/photos", PhotoListController.as_view(), name="photo-list"),
     ],

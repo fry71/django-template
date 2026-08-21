@@ -10,6 +10,7 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator
 type UserID = int
 type MessageID = int
 type PhotoID = int
+type RoomID = int
 
 
 def _field(description: str, **kwargs: Any) -> Any:
@@ -72,6 +73,7 @@ class UserUpdateIn(BaseModel):
 class MessageIn(BaseModel):
     """Input for creating a message."""
 
+    room_id: RoomID = _field("Target chat room ID")
     content: str = _field(
         "Message text",
         min_length=1,
@@ -124,8 +126,44 @@ class PageQuery(BaseModel):
 class MessagePageQuery(PageQuery):
     """Query parameters for the message list."""
 
+    room_id: RoomID | None = _field("Filter by chat room", default=None)
     search: str | None = _field("Full-text search", default=None)
     sort: Literal["asc", "desc"] = _field("Sort order", default="desc")
+
+
+class RoomCreateIn(BaseModel):
+    """Input for creating a group chat room."""
+
+    name: str = _field(
+        "Room name",
+        min_length=1,
+        max_length=255,
+    )
+    is_private: bool = _field("Private room flag", default=False)
+
+
+class DirectRoomCreateIn(BaseModel):
+    """Input for creating (or fetching) a 1:1 room."""
+
+    peer_id: UserID = _field("The other user ID")
+
+
+class RoomOut(BaseModel):
+    """Chat room output."""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    id: RoomID = _field("Room ID")
+    name: str = _field("Room name")
+    room_type: Literal["group", "direct"] = _field("Room type")
+    is_private: bool = _field("Private room flag")
+    created_by_id: UserID = _field("Creator user ID")
+    created_at: datetime = _field("Created at")
+    updated_at: datetime = _field("Last activity at")
+
+
+class RoomsPage(Paginated[RoomOut]):
+    """Paginated room list."""
 
 
 class PhotoUploadMeta(BaseModel):

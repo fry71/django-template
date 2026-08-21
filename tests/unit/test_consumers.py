@@ -7,7 +7,7 @@ from datetime import UTC
 import pytest
 
 from api.user.consumers import ChatConsumer
-from api.user.models import Message
+from api.user.models import ChatRoom, Message, RoomMembership
 
 
 class _FakeChannelLayer:
@@ -26,10 +26,10 @@ class _FakeChannelLayer:
         self.sent.append(event)
 
 
-async def _make_consumer(token: str | None) -> ChatConsumer:
+async def _make_consumer(token: str | None, room_id: int | None = 1) -> ChatConsumer:
     consumer = ChatConsumer.__new__(ChatConsumer)
     consumer.scope = {
-        "url_route": {"kwargs": {"token": token}},
+        "url_route": {"kwargs": {"token": token, "room_id": room_id}},
     }
     consumer.channel_layer = _FakeChannelLayer()
     consumer.channel_name = "test_channel"
@@ -42,6 +42,16 @@ async def _make_consumer(token: str | None) -> ChatConsumer:
     return consumer
 
 
+async def _make_room(user, *, member: bool = True) -> ChatRoom:
+    room = await ChatRoom.objects.acreate(
+        name="test-room",
+        created_by=user,
+    )
+    if member:
+        await RoomMembership.objects.acreate(room=room, user=user)
+    return room
+
+
 async def _make_valid_token(user) -> str:
     from datetime import datetime, timedelta
 
@@ -51,6 +61,7 @@ async def _make_valid_token(user) -> str:
     now = datetime.now(UTC)
     payload = {
         "user_id": user.id,
+        "token_type": "access",
         "exp": int((now + timedelta(minutes=5)).timestamp()),
         "iat": int(now.timestamp()),
     }
@@ -62,7 +73,8 @@ async def _make_valid_token(user) -> str:
 @pytest.mark.django_db(transaction=True)
 class TestChatConsumerConnect:
     async def test_connect_success(self, test_user) -> None:
-        consumer = await _make_consumer(await _make_valid_token(test_user))
+        room = await _make_room(test_user)
+        consumer = await _make_consumer(await _make_valid_token(test_user), room.id)
         accepted: list[bool] = []
 
         async def fake_accept() -> None:
@@ -78,12 +90,31 @@ class TestChatConsumerConnect:
 
         assert accepted == [True]
         assert consumer.user.id == test_user.id
-        assert consumer.group_name == "chat_group"
+        assert consumer.group_name == f"chat_{room.id}"
         assert consumer.channel_layer.groups == [
-            ("chat_group", "test_channel"),
+            (f"chat_{room.id}", "test_channel"),
         ]
 
-    async def test_connect_without_token(self) -> None:
+    async def test_connect_non_member_rejected(self, test_user) -> None:
+        room = await _make_room(test_user, member=False)
+        consumer = await _make_consumer(await _make_valid_token(test_user), room.id)
+        closed: list[bool] = []
+
+        async def fake_close() -> None:
+            closed.append(True)
+
+        async def fake_accept() -> None:
+            raise AssertionError("should not accept non-member")
+
+        consumer.accept = fake_accept  # type: ignore[method-assign]
+        consumer.close = fake_close  # type: ignore[method-assign]
+
+        await consumer.connect()
+
+        assert closed == [True]
+
+    async def test_connect_without_token(self, test_user) -> None:
+        await _make_room(test_user)
         consumer = await _make_consumer(None)
         closed: list[bool] = []
 
@@ -100,7 +131,8 @@ class TestChatConsumerConnect:
 
         assert closed == [True]
 
-    async def test_connect_invalid_token(self) -> None:
+    async def test_connect_invalid_token(self, test_user) -> None:
+        await _make_room(test_user)
         consumer = await _make_consumer("not-a-valid-jwt")
         closed: list[bool] = []
 
@@ -117,15 +149,51 @@ class TestChatConsumerConnect:
 
         assert closed == [True]
 
-    async def test_connect_user_not_found(self) -> None:
+    async def test_connect_refresh_token_rejected(self, test_user) -> None:
         from datetime import datetime, timedelta
 
         import jwt as pyjwt
         from django.conf import settings
 
+        await _make_room(test_user)
+        now = datetime.now(UTC)
+        payload = {
+            "user_id": test_user.id,
+            "token_type": "refresh",
+            "exp": int((now + timedelta(minutes=5)).timestamp()),
+            "iat": int(now.timestamp()),
+        }
+        token = pyjwt.encode(
+            payload, settings.JWT_SECRET_KEY, algorithm=settings.JWT_ALGORITHM
+        )
+
+        consumer = await _make_consumer(token)
+        closed: list[bool] = []
+
+        async def fake_close() -> None:
+            closed.append(True)
+
+        async def fake_accept() -> None:
+            raise AssertionError("should not accept refresh token")
+
+        consumer.accept = fake_accept  # type: ignore[method-assign]
+        consumer.close = fake_close  # type: ignore[method-assign]
+
+        await consumer.connect()
+
+        assert closed == [True]
+
+    async def test_connect_user_not_found(self, test_user) -> None:
+        from datetime import datetime, timedelta
+
+        import jwt as pyjwt
+        from django.conf import settings
+
+        await _make_room(test_user)
         now = datetime.now(UTC)
         payload = {
             "user_id": 999_999,
+            "token_type": "access",
             "exp": int((now + timedelta(minutes=5)).timestamp()),
             "iat": int(now.timestamp()),
         }
@@ -153,9 +221,10 @@ class TestChatConsumerConnect:
 @pytest.mark.django_db(transaction=True)
 class TestChatConsumerDisconnect:
     async def test_disconnect_cleans_group(self, test_user) -> None:
-        consumer = await _make_consumer(await _make_valid_token(test_user))
+        room = await _make_room(test_user)
+        consumer = await _make_consumer(await _make_valid_token(test_user), room.id)
         consumer.user = test_user
-        consumer.group_name = "chat_group"
+        consumer.group_name = f"chat_{room.id}"
 
         await consumer.connect()
         await consumer.disconnect(1000)
@@ -171,7 +240,8 @@ class TestChatConsumerReceive:
         assert consumer.channel_layer.sent == []
 
     async def test_receive_valid_message(self, test_user) -> None:
-        consumer = await _make_consumer(await _make_valid_token(test_user))
+        room = await _make_room(test_user)
+        consumer = await _make_consumer(await _make_valid_token(test_user), room.id)
         await consumer.connect()
         consumer.user = test_user
 
@@ -182,10 +252,14 @@ class TestChatConsumerReceive:
         assert event["type"] == "chat_message"
         assert event["message"]["content"] == "hello chat"
         assert event["message"]["username"] == test_user.username
-        assert await Message.objects.filter(content="hello chat").aexists()
+        assert await Message.objects.filter(
+            content="hello chat",
+            room_id=room.id,
+        ).aexists()
 
     async def test_receive_empty_content(self, test_user) -> None:
-        consumer = await _make_consumer(await _make_valid_token(test_user))
+        room = await _make_room(test_user)
+        consumer = await _make_consumer(await _make_valid_token(test_user), room.id)
         await consumer.connect()
         consumer.user = test_user
 
@@ -193,7 +267,8 @@ class TestChatConsumerReceive:
         assert consumer.channel_layer.sent == []
 
     async def test_receive_invalid_json(self, test_user) -> None:
-        consumer = await _make_consumer(await _make_valid_token(test_user))
+        room = await _make_room(test_user)
+        consumer = await _make_consumer(await _make_valid_token(test_user), room.id)
         await consumer.connect()
         consumer.user = test_user
 

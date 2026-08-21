@@ -5,12 +5,19 @@ from typing import TYPE_CHECKING
 
 import pytest
 
-from api.user.models import Message
+from api.user.models import ChatRoom, Message, RoomMembership
 
 if TYPE_CHECKING:
     from django.test import AsyncClient
 
 _USER_PASSWORD = "testpass123"
+
+
+async def _make_room_with_member(user) -> ChatRoom:
+    """Create a room and add the user as a member."""
+    room = await ChatRoom.objects.acreate(name="test-room", created_by=user)
+    await RoomMembership.objects.acreate(room=room, user=user)
+    return room
 
 
 async def _login(async_client: AsyncClient, username: str) -> None:
@@ -39,7 +46,12 @@ class TestChatPage:
     ) -> None:
         """Authenticated users see the form and existing messages."""
         await _login(async_client, test_user.username)
-        await Message.objects.acreate(sender=test_user, content="hello chat")
+        room = await _make_room_with_member(test_user)
+        await Message.objects.acreate(
+            sender=test_user,
+            room=room,
+            content="hello chat",
+        )
 
         resp = await async_client.get("/chat/")
 
@@ -107,7 +119,11 @@ class TestMessageStream:
     ) -> None:
         """The stream emits a rendered message partial for new messages."""
         await _login(async_client, test_user.username)
-        message = await Message.objects.acreate(sender=test_user, content="hello sse")
+        message = await Message.objects.acreate(
+            sender=test_user,
+            room=await _make_room_with_member(test_user),
+            content="hello sse",
+        )
 
         resp = await async_client.get("/chat/stream/")
 

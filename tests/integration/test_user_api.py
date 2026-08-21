@@ -28,6 +28,17 @@ async def _get_token(async_client, username: str, password: str) -> str:
     return resp.json()["access_token"]
 
 
+async def _create_room(async_client, token: str) -> int:
+    resp = await async_client.post(
+        "/api/user/rooms",
+        data={"name": "test-room"},
+        content_type="application/json",
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert resp.status_code == 201, resp.json()
+    return resp.json()["id"]
+
+
 def _error_type(body: dict[str, object]) -> str:
     """Return the machine-readable error type from a DMR ErrorModel."""
     detail = body["detail"]
@@ -235,6 +246,30 @@ class TestUserApi:
         )
         assert resp.status_code == 403
 
+    async def test_refresh_token_rotation(self, async_client, user_data) -> None:
+        await _register_user(async_client, user_data)
+        token_resp = await async_client.post(
+            "/api/user/token",
+            data={"username": user_data["username"], "password": user_data["password"]},
+            content_type="application/json",
+        )
+        tokens = token_resp.json()
+
+        first = await async_client.post(
+            "/api/user/refresh",
+            data={"refresh_token": tokens["refresh_token"]},
+            content_type="application/json",
+        )
+        assert first.status_code == 200
+        assert "access_token" in first.json()
+
+        replay = await async_client.post(
+            "/api/user/refresh",
+            data={"refresh_token": tokens["refresh_token"]},
+            content_type="application/json",
+        )
+        assert replay.status_code == 401
+
     async def test_create_message(self, async_client, user_data: dict[str, str]) -> None:
         await _register_user(async_client, user_data)
         token = await _get_token(
@@ -243,11 +278,14 @@ class TestUserApi:
             user_data["password"],
         )
 
+        headers = {"Authorization": f"Bearer {token}"}
+        room_id = await _create_room(async_client, token)
+
         resp = await async_client.post(
             "/api/user/messages",
-            data={"content": "Hello!"},
+            data={"room_id": room_id, "content": "Hello!"},
             content_type="application/json",
-            headers={"Authorization": f"Bearer {token}"},
+            headers=headers,
         )
         assert resp.status_code == 201
         body = resp.json()
@@ -264,15 +302,16 @@ class TestUserApi:
             user_data["password"],
         )
         headers = {"Authorization": f"Bearer {token}"}
+        room_id = await _create_room(async_client, token)
 
         await async_client.post(
             "/api/user/messages",
-            data={"content": "unique needle"},
+            data={"room_id": room_id, "content": "unique needle"},
             content_type="application/json",
             headers=headers,
         )
         resp = await async_client.get(
-            "/api/user/messages?search=needle&page=1&page_size=10",
+            f"/api/user/messages?search=needle&room_id={room_id}&page=1&page_size=10",
             headers=headers,
         )
         assert resp.status_code == 200
@@ -288,10 +327,11 @@ class TestUserApi:
             user_data["password"],
         )
         headers = {"Authorization": f"Bearer {token}"}
+        room_id = await _create_room(async_client, token)
 
         created = await async_client.post(
             "/api/user/messages",
-            data={"content": "delete me"},
+            data={"room_id": room_id, "content": "delete me"},
             content_type="application/json",
             headers=headers,
         )
@@ -321,9 +361,10 @@ class TestUserApi:
             user_data2["password"],
         )
 
+        room_id = await _create_room(async_client, token1)
         created = await async_client.post(
             "/api/user/messages",
-            data={"content": "mine"},
+            data={"room_id": room_id, "content": "mine"},
             content_type="application/json",
             headers={"Authorization": f"Bearer {token1}"},
         )
