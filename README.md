@@ -4,6 +4,7 @@ A production-ready Django template showcasing modern web development: a fully **
 
 [![Python Version](https://img.shields.io/badge/python-3.14-blue.svg)](https://www.python.org/downloads/)
 [![Django Version](https://img.shields.io/badge/django-6.1-green.svg)](https://www.djangoproject.com/)
+[![CI](https://github.com/fry71/django-template/actions/workflows/ci.yml/badge.svg)](https://github.com/fry71/django-template/actions/workflows/ci.yml)
 [![License](https://img.shields.io/badge/license-MIT-blue.svg)](https://opensource.org/licenses/MIT)
 
 ## Features
@@ -156,15 +157,15 @@ and throttle counters are cleared between tests. No Redis required to run the su
 
 ## CI (GitHub Actions)
 `.github/workflows/ci.yml` runs on every push to `main` and on pull requests:
-- **Lint** — `ruff check .` + `flake8 .` (wemake-python-styleguide) + `black --check` + `ty check`.
-- **Tests (sqlite)** — full pytest suite on SQLite.
-- **Tests (postgres)** — full pytest suite against a Postgres 15 service container, mirroring production database behavior.
+- **Lint** — `ruff check .` + `flake8 . --select=WPS` + `black --check` + `ty check`.
+- **Tests (sqlite)** — pytest + `--cov-fail-under=80` (`api` + `tasks`).
+- **Tests (postgres)** — pytest against Postgres 15 (no coverage gate).
 
 ## Linting
 Configured in `.flake8` (wemake-python-styleguide) and `pyproject.toml` (ruff/black):
 - **ruff** — `uv run ruff check .`
 - **black** — `uv run black --check api tasks tests main.py manage.py`
-- **wemake-python-styleguide (flake8)** — `uv run flake8 .` (uses `.flake8`)
+- **wemake-python-styleguide (flake8)** — `uv run flake8 . --select=WPS` (uses `.flake8`)
   - Excluded: `tests`, `migrations`, `api/config` (Django settings — `WPS407` false positives), `bot`.
   - Allowed exceptions: `WPS110` (domain names), `WPS115` (Django class constants), `WPS201`/`WPS202`/`WPS235` (module import sizes), `WPS226` (string over-use), `WPS432` (magic numbers for `max_length`/HTTP statuses), `WPS476` (serial async retry loops).
 - **ty** — `uv run ty check api tasks main.py manage.py` (uses `django-stubs` `.pyi` from the venv; no mypy plugin).

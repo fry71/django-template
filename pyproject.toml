@@ -105,6 +105,14 @@ dev = [
 asyncio_mode = "auto"
 DJANGO_SETTINGS_MODULE = "api.config.settings"
 
+[tool.coverage.run]
+omit = [
+    "*/migrations/*",
+    "api/config/*",
+    "*/wsgi.py",
+    "*/asgi.py",
+]
+
 
 
 [tool.black]

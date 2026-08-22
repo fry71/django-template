@@ -1,0 +1,38 @@
+repos:
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v6.0.0
+    hooks:
+      - id: check-yaml
+      - id: check-toml
+      - id: end-of-file-fixer
+      - id: trailing-whitespace
+      - id: check-merge-conflict
+
+  - repo: https://github.com/astral-sh/ruff-pre-commit
+    rev: v0.14.5
+    hooks:
+      - id: ruff
+        args: [--fix]
+
+  - repo: https://github.com/psf/black
+    rev: 25.9.0
+    hooks:
+      - id: black
+        args: [--target-version=py314]
+        files: ^(api|tasks|tests)/|^(main|manage)\.py$
+
+  - repo: local
+    hooks:
+      - id: wps
+        name: flake8 (WPS only)
+        entry: uv run flake8 . --select=WPS
+        language: system
+        pass_filenames: false
+        types: [python]
+
+      - id: ty
+        name: ty typecheck
+        entry: uv run ty check api tasks main.py manage.py
+        language: system
+        pass_filenames: false
+        types_or: [python, toml]

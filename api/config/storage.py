@@ -19,12 +19,6 @@ STATIC_URL = "static/"
 MEDIA_ROOT = BASE_DIR / "media"
 MEDIA_URL = "media/"
 
-STATICFILES_DIRS = [
-    BASE_DIR / "staticfiles" / "css",  # e.g. ./static/ at project root
-    BASE_DIR / "staticfiles" / "js",
-    BASE_DIR / "staticfiles" / "turbo" / "js",
-    BASE_DIR / "staticfiles" / "silk",
-]
 
 AWS_STORAGE_BUCKET_NAME = getenv("AWS_STORAGE_BUCKET_NAME", "bucket")
 AWS_S3_CUSTOM_DOMAIN = getenv(
@@ -46,28 +40,41 @@ AWS_S3_CONFIG = {
     },
 }
 
-STORAGES: dict[str, Any] = {}
+
+def _build_storages() -> dict[str, Any]:
+    return {
+        "staticfiles": (
+            AWS_S3_CONFIG
+            if USE_S3_FOR_STATIC
+            else {
+                "BACKEND": "whitenoise.storage.CompressedManifestStaticFilesStorage",
+            }
+        ),
+        "default": (
+            AWS_S3_CONFIG
+            if USE_S3_FOR_MEDIA
+            else {
+                "BACKEND": "django.core.files.storage.FileSystemStorage",
+                "OPTIONS": {
+                    "location": MEDIA_ROOT.as_posix(),
+                    "base_url": MEDIA_URL,
+                },
+            }
+        ),
+    }
+
+
+STORAGES: dict[str, Any] = _build_storages()
 
 if USE_S3_FOR_STATIC:
     logger.info("Serving static files from S3")
-    STORAGES["staticfiles"] = AWS_S3_CONFIG
 else:
     logger.info("Serving static files via WhiteNoise (manifest + compression)")
-    STORAGES["staticfiles"] = {
-        "BACKEND": "whitenoise.storage.CompressedManifestStaticFilesStorage",
-    }
-
 
 if USE_S3_FOR_MEDIA:
     logger.info("Serving media files from S3")
-    STORAGES["default"] = AWS_S3_CONFIG
 else:
     logger.info("Serving media files locally")
-    STORAGES["default"] = {
-        "BACKEND": "django.core.files.storage.FileSystemStorage",
-        "LOCATION": MEDIA_ROOT.as_posix(),
-        "BASE_URL": MEDIA_URL,
-    }
 
 
 class CustomDomainS3Storage(S3Storage):

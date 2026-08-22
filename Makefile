@@ -84,7 +84,7 @@ test:
 	uv run pytest tests/ -q
 
 test.report:
-	uv run pytest tests/ -s -v
+	uv run pytest tests/ -s -v --cov=api --cov=tasks --cov-report=term-missing --cov-fail-under=80
 
 docker.build:
 	docker compose build

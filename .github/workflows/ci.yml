@@ -52,8 +52,17 @@ jobs:
       - name: Install dependencies
         run: uv sync --frozen
 
+      - name: Check for missing migrations
+        run: uv run python manage.py makemigrations --check --dry-run
+        env:
+          DJANGO_SETTINGS_MODULE: api.config.settings
+
       - name: Run tests
-        run: uv run pytest -q
+        run: >-
+          uv run pytest -q
+          --cov=api --cov=tasks
+          --cov-report=term-missing
+          --cov-fail-under=80
 
   test-postgres:
     name: Tests (pytest, postgres)
