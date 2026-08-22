@@ -52,9 +52,9 @@ if USE_S3_FOR_STATIC:
     logger.info("Serving static files from S3")
     STORAGES["staticfiles"] = AWS_S3_CONFIG
 else:
-    logger.info("Serving static files locally")
+    logger.info("Serving static files via WhiteNoise (manifest + compression)")
     STORAGES["staticfiles"] = {
-        "BACKEND": "django.contrib.staticfiles.storage.StaticFilesStorage",
+        "BACKEND": "whitenoise.storage.CompressedManifestStaticFilesStorage",
     }
 
 

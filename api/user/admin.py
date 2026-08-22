@@ -109,6 +109,6 @@ class PhotoAdmin(admin.ModelAdmin):
                 '<img src="{}" style="width: 100px; height: auto;" />',
                 obj.image.url,
             )
-        return _("No image")
+        return str(_("No image"))
 
     image_preview.short_description = _("Preview")

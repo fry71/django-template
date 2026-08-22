@@ -6,6 +6,9 @@ import uuid
 
 os.environ.setdefault("DJANGO_SETTINGS_MODULE", "api.config.settings")
 os.environ.setdefault("TASKIQ_IN_MEMORY", "true")
+# Tests must be hermetic: no persistent redis cacheops state and no
+# accumulated throttle counters between runs (see cache.py).
+os.environ.setdefault("USE_REDIS_FOR_CACHE", "false")
 
 import django
 
@@ -77,3 +80,12 @@ def mock_taskiq_tasks(monkeypatch) -> None:
         monkeypatch.setattr(task, "kiq", fake_kiq.__get__(task, type(task)))
 
     return calls
+
+
+@pytest.fixture(autouse=True)
+def _clear_throttle_cache() -> None:
+    """Reset throttle counters so rate limits don't leak between tests."""
+    yield
+    from django.core.cache import cache
+
+    cache.clear()

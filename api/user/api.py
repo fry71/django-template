@@ -25,6 +25,7 @@ from dmr.security.jwt.views import (
     RefreshTokenAsyncController,
     RefreshTokenPayload,
 )
+from dmr.throttling import AsyncThrottle
 
 from api.common.controllers import (
     ERROR_RESPONSES,
@@ -38,7 +39,6 @@ from api.common.exceptions import (
     ValidationError,
 )
 from api.common.pagination import build_page, paginate
-from api.common.schemas import OperationResultSchema
 from api.user import schema
 from api.user.models import UsedRefreshToken
 from api.user.models import User as UserModel
@@ -50,6 +50,10 @@ from api.user.services import (
 )
 
 logger = logging.getLogger(__name__)
+
+# Brute-force protection on auth endpoints (dmr docs: never have auth
+# without throttling before it).
+_AUTH_THROTTLE = AsyncThrottle(max_requests=10, duration_in_seconds=60)
 
 
 def _access_lifetime_minutes() -> int:
@@ -93,6 +97,7 @@ class ObtainAccessAndRefreshController(
     """Issue an access and refresh token pair for valid credentials."""
 
     jwt_secret = settings.JWT_SECRET_KEY
+    throttling = (_AUTH_THROTTLE,)
 
     async def convert_auth_payload(
         self,
@@ -132,18 +137,20 @@ class RefreshAccessAndRefreshController(
 
     jwt_secret = settings.JWT_SECRET_KEY
     responses = ERROR_RESPONSES
+    throttling = (_AUTH_THROTTLE,)
 
     async def convert_refresh_payload(self, payload: RefreshTokenPayload) -> str:
-        """Validate the raw refresh token and denylist its jti."""
+        """Denylist the presented refresh token's jti (rotation).
+
+        Token signature, type, expiry, and user existence are validated
+        by the parent ``refresh()`` flow after this hook returns.
+        """
         raw_token = payload["refresh_token"]
         claims = jwt.decode(
             raw_token,
             self.jwt_secret,
             algorithms=[settings.JWT_ALGORITHM],
         )
-        if claims.get("extras", {}).get("type") != "refresh":
-            msg = "Refresh token required"
-            raise UnauthorizedError(msg)
         token_jti = claims.get("jti")
         if not token_jti:
             msg = "Refresh token has no jti"
@@ -344,10 +351,11 @@ class MessageDetailController(BaseAsyncController):
 
     auth = (JWT_AUTH,)
 
+    @modify(status_code=HTTPStatus.NO_CONTENT)
     async def delete(
         self,
         parsed_path: Path[_MessageIdPath],
-    ) -> OperationResultSchema:
+    ) -> None:
         """Delete a message owned by the current user."""
         message_id = parsed_path["message_id"]
         message = await message_service.get_message(message_id)
@@ -360,7 +368,6 @@ class MessageDetailController(BaseAsyncController):
             raise PermissionDeniedError(msg)
 
         await message_service.delete_message(message_id)
-        return OperationResultSchema(detail="Message deleted")
 
 
 class RoomListController(BaseAsyncController):
@@ -422,11 +429,11 @@ class RoomMembershipController(BaseAsyncController):
 
     auth = (JWT_AUTH,)
 
-    @modify()
+    @modify(status_code=HTTPStatus.NO_CONTENT)
     async def post(
         self,
         parsed_path: Path[_RoomIdPath],
-    ) -> OperationResultSchema:
+    ) -> None:
         """Join a public room."""
         joined = await room_service.join_room(
             parsed_path["room_id"],
@@ -435,13 +442,12 @@ class RoomMembershipController(BaseAsyncController):
         if not joined:
             msg = "Room not found"
             raise NotFoundError(msg)
-        return OperationResultSchema(detail="Joined the room")
 
-    @modify()
+    @modify(status_code=HTTPStatus.NO_CONTENT)
     async def delete(
         self,
         parsed_path: Path[_RoomIdPath],
-    ) -> OperationResultSchema:
+    ) -> None:
         """Leave a room."""
         left = await room_service.leave_room(
             parsed_path["room_id"],
@@ -450,7 +456,6 @@ class RoomMembershipController(BaseAsyncController):
         if not left:
             msg = "Room not found"
             raise NotFoundError(msg)
-        return OperationResultSchema(detail="Left the room")
 
 
 class PhotoListController(BaseAsyncController):

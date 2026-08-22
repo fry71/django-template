@@ -3,6 +3,8 @@ from __future__ import annotations
 import logging
 from os import getenv
 
+from dmr.settings import Settings
+
 logger = logging.getLogger(__name__)
 
 # Secret keys — must be changed in production!
@@ -23,7 +25,7 @@ if _default_jwt_secret_key == JWT_SECRET_KEY:
 
 # JWT settings — required for production
 JWT_ALGORITHM = "HS256"
-JWT_ACCESS_TOKEN_LIFETIME = 60  # 5 minutes
+JWT_ACCESS_TOKEN_LIFETIME = 5  # minutes
 JWT_HEADER_PREFIX = "JWT"
 
 # SECURITY WARNING: don't run with debug turned on in production!
@@ -71,3 +73,9 @@ CORS_ALLOWED_ORIGINS = getenv("CORS_ALLOWED_ORIGINS", "http://localhost").split(
 )
 
 DATA_UPLOAD_MAX_MEMORY_SIZE = 5242880
+
+DMR_SETTINGS = {
+    # Response validation is a dev-time safety net; disable it in production
+    # for speed per dmr docs ("Keep it on in development").
+    Settings.validate_responses: not DEBUG,
+}

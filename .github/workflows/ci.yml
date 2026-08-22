@@ -7,7 +7,7 @@ on:
 
 jobs:
   lint:
-    name: Lint (ruff + black + ty)
+    name: Lint (ruff + WPS + black + ty)
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
@@ -24,8 +24,8 @@ jobs:
       - name: Lint with ruff
         run: uv run ruff check .
 
-      - name: Lint with flake8 (wemake-python-styleguide)
-        run: uv run flake8 .
+      - name: Lint with flake8 (WPS only)
+        run: uv run flake8 . --select=WPS
 
       - name: Check formatting with black
         run: uv run black --check api tasks tests main.py manage.py

@@ -55,11 +55,11 @@ dependencies = [
     # Utilities
     "python-dotenv>=1.0.0",
     "django-axes",
-    "aiofiles",
     "valkey",
     "boto3",
     "sentry_sdk",
     "Pillow",
+    "whitenoise>=6.12.0",
 ]
 
 

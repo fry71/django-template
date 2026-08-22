@@ -246,6 +246,41 @@ class TestUserApi:
         )
         assert resp.status_code == 403
 
+    async def test_room_membership_join_leave(
+        self, async_client, user_data: dict[str, str], user_data2
+    ) -> None:
+        await _register_user(async_client, user_data)
+        await _register_user(async_client, user_data2)
+        token1 = await _get_token(
+            async_client,
+            user_data["username"],
+            user_data["password"],
+        )
+        token2 = await _get_token(
+            async_client,
+            user_data2["username"],
+            user_data2["password"],
+        )
+        room_id = await _create_room(async_client, token1)
+
+        joined = await async_client.post(
+            f"/api/user/rooms/{room_id}/membership",
+            headers={"Authorization": f"Bearer {token2}"},
+        )
+        assert joined.status_code == 204
+
+        left = await async_client.delete(
+            f"/api/user/rooms/{room_id}/membership",
+            headers={"Authorization": f"Bearer {token2}"},
+        )
+        assert left.status_code == 204
+
+        missing = await async_client.post(
+            "/api/user/rooms/999999/membership",
+            headers={"Authorization": f"Bearer {token2}"},
+        )
+        assert missing.status_code == 404
+
     async def test_refresh_token_rotation(self, async_client, user_data) -> None:
         await _register_user(async_client, user_data)
         token_resp = await async_client.post(
@@ -341,8 +376,7 @@ class TestUserApi:
             f"/api/user/messages/{message_id}",
             headers=headers,
         )
-        assert resp.status_code == 200
-        assert resp.json()["detail"] == "Message deleted"
+        assert resp.status_code == 204
         assert await Message.objects.filter(id=message_id).aexists() is False
 
     async def test_delete_message_forbidden(

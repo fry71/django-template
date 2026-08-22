@@ -1,8 +1,14 @@
-
 PYTHON = uv run python
 UVICORN = uv run uvicorn
 GUNICORN = uv run gunicorn
 TASKIQ = uv run taskiq
+
+SRC = api tasks tests main.py manage.py
+
+.PHONY: run.bot run.server.local run.server.prod run.bot.local run.bot.prod \
+	run.taskiq.local run.taskiq.prod makemigrations migrate collectstatic \
+	createsuperuser fmt lint black black-check ruff ruff-fix wps ty mypy \
+	test test.report docker.build docker.update docker.up docker.down docker.rebuild
 
 # Run bot and server
 run.bot:
@@ -12,7 +18,8 @@ run.server.local:
 	$(UVICORN) api.web.asgi:application \
 		--host 0.0.0.0 \
 		--port 8000 \
-		--reload 
+		--reload
+
 run.server.prod:
 	$(GUNICORN) api.web.asgi:application \
 		-b 0.0.0.0:8000 \
@@ -27,10 +34,10 @@ run.bot.prod:
 	$(PYTHON) -m bot
 
 run.taskiq.local:
-	DJANGO_SETTINGS_MODULE=api.config.settings $(TASKIQ) worker tasks.broker:broker 
+	DJANGO_SETTINGS_MODULE=api.config.settings $(TASKIQ) worker tasks.broker:broker
 
 run.taskiq.prod:
-	$(TASKIQ) worker tasks.broker:broker --worker 2 
+	$(TASKIQ) worker tasks.broker:broker --workers 2
 
 # Django management
 makemigrations:
@@ -45,40 +52,46 @@ collectstatic:
 createsuperuser:
 	$(PYTHON) manage.py createsuperuser --email "" --username admin
 
-# Formatting, linting, and tests
+# Formatting, linting, and tests (same as CI / AGENTS.md)
 fmt:
-	make -k ruff-fmt black
+	make -k ruff-fix black
 
 lint:
-	make -k ruff black-check mypy
+	make -k ruff wps black-check ty
 
 black:
-	uv run black .
+	uv run black --target-version py314 $(SRC)
 
 black-check:
-	uv run black --check .
+	uv run black --check --target-version py314 $(SRC)
 
 ruff:
-	uv run ruff .
+	uv run ruff check .
 
-ruff-fmt:
-	uv run ruff --fix-only --unsafe-fixes .
+ruff-fix:
+	uv run ruff check --fix --unsafe-fixes .
+
+wps:
+	uv run flake8 . --select=WPS
+
+ty:
+	uv run ty check api tasks main.py manage.py
+
+mypy:
+	uv run mypy api/
 
 test:
-	uv run pytest
+	uv run pytest tests/ -q
 
 test.report:
-	uv run pytest -s -v
-	
-mypy:
-	uv run mypy .
+	uv run pytest tests/ -s -v
 
 docker.build:
 	docker compose build
 
 docker.update:
-	docker compose build api bot celery celery-beat
-	docker compose up -d --no-deps api bot celery celery-beat
+	docker compose build web worker
+	docker compose up -d --no-deps web worker
 
 docker.up:
 	docker compose up

@@ -1,6 +1,6 @@
 # Django Gateway — High Performance Django Template
 
-A production-ready Django template showcasing modern web development: a fully **async REST API** built with **django-modern-rest**, **JWT** authentication, **real-time chat** (SSE + REST) with Django forms and templates, background jobs with Taskiq, and performance comparable to FastAPI — while keeping all Django batteries.
+A production-ready Django template showcasing modern web development: a fully **async REST API** built with **django-modern-rest**, **JWT** authentication, **WebSocket chat rooms**, an optional HTML/SSE demo, background jobs with Taskiq, and performance comparable to FastAPI — while keeping all Django batteries.
 
 [![Python Version](https://img.shields.io/badge/python-3.14-blue.svg)](https://www.python.org/downloads/)
 [![Django Version](https://img.shields.io/badge/django-6.1-green.svg)](https://www.djangoproject.com/)
@@ -10,9 +10,12 @@ A production-ready Django template showcasing modern web development: a fully **
 - 🚀 **High Performance** — Async Django with performance comparable to FastAPI
 - 🔧 **Async-first API** — django-modern-rest (DMR) controllers, fully async ORM (`aget`, `acreate`, `aiterator`)
 - 📦 **All Django Batteries** — Admin, ORM, Auth, Forms, Templates
-- 💬 **Real-time Chat** — Django form page wired via **Server-Sent Events (SSE)** + **REST**, session authentication
+- 💬 **Chat Rooms (golden path)** — JWT REST for rooms/messages; membership-checked WebSocket `WS /ws/chat/<room_id>/` with first-frame `{"type":"auth","token":"<access JWT>"}` (token never in the URL)
+- 🖥️ **HTML chat demo** — session login + Django form + SSE at `/chat/` (same `Message` model; not a second product)
 - 🧩 **Django 6.1 Template Partials** — `{% partialdef %}` / `{% partial %}` for server-rendered chat messages
-- 🔐 **JWT Authentication** — token-based auth for the API (`/api/user/token`, `/api/user/refresh`)
+- 🔐 **JWT Authentication** — token-based auth for the API (`/api/user/token`, `/api/user/refresh`), refresh-token rotation with jti denylist; access TTL 5 minutes
+- 🤖 **Telegram Bot** — aiogram 3 with routers/handlers (polling mode)
+- 🎨 **WhiteNoise** — static files served with compression + manifests; media via nginx/S3
 - 🔄 **Background Tasks** — Taskiq jobs dispatched after DB commit (`task.kiq(...)`)
 - 📚 **OpenAPI Documentation** — auto-generated Swagger UI
 - 🗄️ **Modern ORM** — strict typing (PEP 695), `select_related` to avoid N+1, N+1 guard
@@ -35,13 +38,17 @@ A production-ready Django template showcasing modern web development: a fully **
 api/
 ├── common/          # Shared DTOs, error handling (BaseAsyncController)
 ├── config/          # Split settings (split_settings)
-├── user/            # User/Message/Photo models, DMR controllers, services, forms, views
-│   ├── api.py       # REST controllers (token, users, messages, photos)
+├── user/            # User/ChatRoom/RoomMembership/Message/Photo models, DMR controllers,
+│                    # services, WS consumers, forms, views
+│   ├── api.py       # REST controllers (token, users, rooms, messages, photos)
+│   ├── consumers.py # WebSocket chat consumer (rooms, membership, rate limit)
 │   ├── views.py     # Chat page, REST send, SSE stream
-│   ├── services/    # Async service layer (business logic)
-│   ├── forms.py     # Django form for the chat
-│   └── migrations/  # Includes demo users (0003_demo_users)
-├── templates/       # Django templates (base, login, chat with partials)
+│   ├── services/    # Async service layer (user/room/message/photo)
+│   └── migrations/  # Single fresh 0001_initial (regenerated on model change)
+bot/
+├── config/bot.py    # aiogram settings (token, running mode)
+└── handlers/        # Routers: /start, /help, echo fallback
+templates/           # Django templates (base, login, chat with partials)
 └── web/             # Router, URLconf, ASGI/WSGI
 ```
 
@@ -54,10 +61,11 @@ curl http://127.0.0.1:8000/health/   # {"status":"ok"}
 docker compose run --rm test # run the test suite against Postgres
 docker compose down          # stop (add -v to also drop volumes)
 ```
-`docker compose up` starts `web` (gunicorn + `uvicorn_worker`, auto-runs `migrate` +
-`collectstatic`), `worker` (Taskiq consumer), `db` and `redis`. Static and media files
-are served by Django itself via async ASGI handlers (`serve_static` / `serve_media`),
-so no separate static server is needed in dev. `db` and `redis` are only reachable
+`docker compose up` is **local only**: `DJANGO_DEBUG=true` and the compose
+secret keys are not production values. It starts `web` (gunicorn + `uvicorn_worker`, auto-runs `migrate` +
+`collectstatic`), `worker` (Taskiq consumer), `db` and `redis`. Static files are served
+by **WhiteNoise** middleware; in production put nginx (or S3) in front for static and
+media — the ASGI app itself never serves files. `db` and `redis` are only reachable
 inside the compose network — only `web` publishes port 8000, so nothing conflicts with
 a local Postgres/Valkey. The `test` service has its own profile and runs on demand
 (see above).
@@ -83,7 +91,9 @@ uv sync
 ```bash
 uv run python manage.py migrate
 ```
-This also creates the demo users `demo1` and `demo2` (password: `demo12345`, override with `DJANGO_DEMO_PASSWORD`) and, if you set `DJANGO_ADMIN_USERNAME`/`DJANGO_ADMIN_PASSWORD`, the admin user.
+The template ships a single fresh `0001_initial` (no demo data). If you set
+`DJANGO_ADMIN_USERNAME`/`DJANGO_ADMIN_PASSWORD`, a superuser can be created via
+`manage.py createsuperuser`.
 
 ### 4. Run the development server
 ```bash
@@ -99,29 +109,50 @@ make run.server.local
 | `http://127.0.0.1:8000/api/docs` | Swagger UI / OpenAPI docs |
 | `http://127.0.0.1:8000/admin/` | Django admin (`admin` / `admin` by default) |
 | `http://127.0.0.1:8000/login/` | Login page (session auth) |
-| `http://127.0.0.1:8000/chat/` | Real-time chat (SSE + REST, requires login) |
-| `POST /api/user/token` | Obtain JWT access + refresh tokens |
-| `POST /api/user/refresh` | Refresh the access token |
+| `http://127.0.0.1:8000/chat/` | HTML demo: session chat via SSE (not the API golden path) |
+| `POST /api/user/token` | Obtain JWT access + refresh tokens (throttled: 10 req/min; access TTL 5 min) |
+| `POST /api/user/refresh` | Refresh the token pair (rotation, jti denylist; throttled) |
 | `GET/POST /api/user/users` | List / create users |
-| `GET/POST /api/user/messages` | List / create messages (JWT) |
+| `GET/POST /api/user/rooms` | List / create chat rooms (JWT) |
+| `POST /api/user/rooms/direct` | Get or create a 1:1 room with a peer (JWT) |
+| `POST/DELETE /api/user/rooms/{id}/membership` | Join / leave a room (JWT, 204) |
+| `GET/POST /api/user/messages?room_id=` | List / create messages per room (JWT) |
 | `GET/POST /api/user/photos` | List / upload photos (JWT, multipart) |
+| `WS /ws/chat/<room_id>/` | Room chat. First frame: `{"type":"auth","token":"<access JWT>"}` |
 
 ## Real-time chat
 
-The chat page (`/chat/`) is a classic Django form + template page authenticated via the session:
+**Golden path (API / mobile / SPA):** JWT + REST rooms/messages + WebSocket
+`/ws/chat/<room_id>/`. After the socket opens, send
+`{"type": "auth", "token": "<access JWT>"}`. The server replies `{"type": "auth_ok"}`
+then accepts `{"content": "..."}` messages. Membership is checked on auth;
+rate limit 10 msg / 5 s.
+
+**HTML demo only:** `/chat/` is a session-authenticated Django form + **SSE**
+page that uses the same `Message` / `ChatRoom` models (shared `general` room).
+Do not copy both stacks into a product — pick WebSockets for clients, or SSE
+for server-rendered HTML.
+
+The demo page:
 
 - **Send** — `POST /chat/send/` (REST): validates `MessageForm`, creates the message, returns JSON `{id, content, sender, timestamp}`.
 - **Receive** — `GET /chat/stream/` (SSE): streams new messages as `text/event-stream`. Events carry an `id` (message PK) so the browser resumes correctly after reconnects (`Last-Event-ID`).
 - **Rendering** — the message markup is a **Django 6.1 template partial** (`{% partialdef message-item %}` in `api/templates/chat/chat.html`), used both for the initial page render and for SSE-injected HTML — a single source of truth.
 
 ### Try it
-1. Log in as `demo1` / `demo12345` in one browser and `demo2` / `demo12345` in another.
-2. Send a message from either user — it appears live in both chats via SSE.
+1. Create two users (`POST /api/user/users` or via admin), log in as each in a separate browser.
+2. Send a message from either user — it appears live in both chats via SSE (messages land in the shared `general` room).
 
 ## Testing
 ```bash
-USE_REDIS_FOR_CACHE=false TASKIQ_IN_MEMORY=true DJANGO_SETTINGS_MODULE=api.config.settings uv run pytest tests/ -q
+uv run pytest tests/ -q
 ```
+Tests are hermetic: under pytest the redis cache/cacheops is disabled automatically
+and throttle counters are cleared between tests. No Redis required to run the suite.
+
+## AI agents
+`AGENTS.md` in the repo root contains ground rules for AI coding agents
+(architecture, dmr conventions, security rules, testing/linting requirements).
 
 ## CI (GitHub Actions)
 `.github/workflows/ci.yml` runs on every push to `main` and on pull requests:

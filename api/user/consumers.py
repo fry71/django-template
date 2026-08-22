@@ -44,17 +44,15 @@ class ChatConsumer(AsyncWebsocketConsumer):
     """WebSocket consumer for real-time chat functionality."""
 
     async def connect(self) -> None:
-        """Handle a new WebSocket connection."""
+        """Accept the socket; auth is the first JSON frame (not a query token)."""
         logger.info("WebSocket connecting...")
-        if not await self._authenticate():
+        room_id = self.scope["url_route"]["kwargs"].get("room_id")
+        if not room_id:
+            await self.close()
             return
-        self._rate_limiter = SlidingWindowRateLimiter(
-            max_messages=RATE_LIMIT_MESSAGES,
-            window_seconds=RATE_LIMIT_WINDOW_SECONDS,
-        )
-        await self.channel_layer.group_add(self.group_name, self.channel_name)
+        self.room_id = int(room_id)
+        self._authenticated = False
         await self.accept()
-        logger.info("User %s connected to chat", self.user.username)
 
     async def disconnect(self, close_code: int | None) -> None:
         """Handle WebSocket disconnection."""
@@ -66,10 +64,10 @@ class ChatConsumer(AsyncWebsocketConsumer):
 
     async def receive(self, text_data: str | None) -> None:
         """Handle incoming WebSocket messages."""
-        if not hasattr(self, "group_name"):
-            logger.warning("Received message before connection established")
+        if not hasattr(self, "room_id") or not text_data:
             return
-        if not text_data:
+        if not self._authenticated:
+            await self._authenticate_first_frame(text_data)
             return
         await self._broadcast_message(text_data)
 
@@ -89,25 +87,15 @@ class ChatConsumer(AsyncWebsocketConsumer):
         except Exception:
             logger.exception("Error sending message to client")
 
-    async def _authenticate(self) -> bool:
-        """Authenticate the user and verify room membership.
-
-        Returns whether the connection may proceed.
-        """
-        kwargs = self.scope["url_route"]["kwargs"]
-        token = kwargs.get("token")
-        raw_room_id = kwargs.get("room_id")
-        if not token or not raw_room_id:
-            logger.error("No token or room id provided")
+    async def _authenticate_first_frame(self, text_data: str) -> None:
+        """Authenticate from ``{"type": "auth", "token": "<access JWT>"}``."""
+        token = _extract_auth_token(text_data)
+        if token is None:
+            logger.error("First WebSocket frame must be an auth message")
             await self.close()
-            return False
-        self.room_id = int(raw_room_id)
-        try:
-            self.user = await self._resolve_user(token)
-        except jwt.InvalidTokenError, User.DoesNotExist, KeyError:
-            logger.exception("WebSocket authentication failed")
-            await self.close()
-            return False
+            return
+        if not await _bind_user(self, token):
+            return
         if not await room_service.is_member(self.room_id, self.user.id):
             logger.warning(
                 "User %s is not a member of room %s",
@@ -115,23 +103,20 @@ class ChatConsumer(AsyncWebsocketConsumer):
                 self.room_id,
             )
             await self.close()
-            return False
-        self.group_name = f"chat_{self.room_id}"
-        return True
+            return
+        await self._join_room_group()
 
-    async def _resolve_user(self, token: str) -> User:
-        """Resolve a user from a valid access JWT token."""
-        payload = jwt.decode(
-            token,
-            settings.JWT_SECRET_KEY,
-            algorithms=[settings.JWT_ALGORITHM],
+    async def _join_room_group(self) -> None:
+        """Subscribe the socket to the room channel group."""
+        self.group_name = f"chat_{self.room_id}"
+        self._rate_limiter = SlidingWindowRateLimiter(
+            max_messages=RATE_LIMIT_MESSAGES,
+            window_seconds=RATE_LIMIT_WINDOW_SECONDS,
         )
-        extras = payload.get("extras", {})
-        token_type = extras.get("type") or payload.get("token_type")
-        if token_type != "access":
-            msg = "Refresh token used for WebSocket auth"
-            raise jwt.InvalidTokenError(msg)
-        return await User.objects.aget(id=payload["user_id"])
+        await self.channel_layer.group_add(self.group_name, self.channel_name)
+        self._authenticated = True
+        await self.send(text_data=json.dumps({"type": "auth_ok"}))
+        logger.info("User %s connected to chat", self.user.username)
 
     async def _broadcast_message(self, text_data: str) -> None:
         """Parse a chat message and broadcast it to the group."""
@@ -168,3 +153,43 @@ class ChatConsumer(AsyncWebsocketConsumer):
             },
         )
         logger.info("Message sent by %s: %s", self.user.username, content)
+
+
+async def _bind_user(consumer: ChatConsumer, token: str) -> bool:
+    """Resolve JWT to ``consumer.user``. Return whether auth may continue."""
+    try:
+        consumer.user = await _user_from_access_token(token)
+    except jwt.InvalidTokenError, User.DoesNotExist, KeyError:
+        logger.exception("WebSocket authentication failed")
+        await consumer.close()
+        return False
+    return True
+
+
+async def _user_from_access_token(token: str) -> User:
+    """Resolve a user from a valid access JWT token."""
+    payload = jwt.decode(
+        token,
+        settings.JWT_SECRET_KEY,
+        algorithms=[settings.JWT_ALGORITHM],
+    )
+    extras = payload.get("extras", {})
+    token_type = extras.get("type") or payload.get("token_type")
+    if token_type != "access":
+        msg = "Refresh token used for WebSocket auth"
+        raise jwt.InvalidTokenError(msg)
+    return await User.objects.aget(id=payload["user_id"])
+
+
+def _extract_auth_token(text_data: str) -> str | None:
+    """Return the access token from a first-frame auth payload, or None."""
+    try:
+        payload = json.loads(text_data)
+    except json.JSONDecodeError:
+        return None
+    if payload.get("type") != "auth":
+        return None
+    token = payload.get("token")
+    if not isinstance(token, str) or not token:
+        return None
+    return token

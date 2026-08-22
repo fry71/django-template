@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+import sys
 from os import getenv
 from typing import Any
 
@@ -9,7 +10,12 @@ from redis.exceptions import RedisError
 
 logger = logging.getLogger(__name__)
 
-USE_REDIS_FOR_CACHE = getenv("USE_REDIS_FOR_CACHE", default="true").lower() == "true"
+# Tests must be hermetic: no persistent cacheops state across truncated
+# transactions and no throttle counters leaked between test runs.
+_UNDER_PYTEST = "pytest" in sys.modules
+USE_REDIS_FOR_CACHE = (
+    getenv("USE_REDIS_FOR_CACHE", default="true").lower() == "true" and not _UNDER_PYTEST
+)
 REDIS_URL = getenv("REDIS_URL", default="redis://redis:6379/0")
 # REDIS_PASSWORD = getenv("REDIS_PASSWORD", default="guest")
 logger.info("USE_REDIS_FOR_CACHE: %s", USE_REDIS_FOR_CACHE)
@@ -28,11 +34,13 @@ if USE_REDIS_FOR_CACHE:
 
     CACHEOPS_DEFAULTS = {"timeout": 60 * 60}
 
+    # Opt-in caching per model (cacheops recommendation: do NOT use "*.*":
+    # "all" — it caches every queryset including admin, sessions, migrations,
+    # and amplifies invalidation storms). Enable selectively:
     CACHEOPS = {
-        # "api.user.*": {"ops": "all", "timeout": 60 * 15},
-        # "auth.permission": {"ops": "all", "timeout": 60 * 60},
-        # "auth.*": {"ops": ("fetch", "get"), "timeout": 60 * 60},
-        "*.*": {"ops": "all", "timeout": 60 * 15},
+        "user.user": {"ops": ("fetch", "get"), "timeout": 60 * 15},
+        "user.chatroom": {"ops": ("fetch", "get"), "timeout": 60 * 10},
+        "user.message": {"ops": ("get",), "timeout": 60 * 5},
         # Never cache Django's internal migration recorder: it is not an
         # installed app label, so unpickling its cached rows raises LookupError.
         "migrations.*": None,

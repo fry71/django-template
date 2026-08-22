@@ -28,7 +28,7 @@ async def create_photo(user_id: int, uploaded: UploadedFile) -> Photo:
         msg = "Only image files are allowed"
         raise ValidationError(msg, fields={"image": [msg]})
 
-    if uploaded.size > _MAX_PHOTO_SIZE:
+    if uploaded.size and uploaded.size > _MAX_PHOTO_SIZE:
         msg = "File size must not exceed 5MB"
         raise ValidationError(msg, fields={"image": [msg]})
 

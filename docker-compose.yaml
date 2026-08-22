@@ -35,6 +35,7 @@ services:
     build: .
     ports:
       - "8000:8000"
+    # Local compose only: DEBUG and the keys below are not production secrets.
     environment: &app-env
       DJANGO_SETTINGS_MODULE: api.config.settings
       DJANGO_DEBUG: "true"
