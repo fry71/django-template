@@ -148,7 +148,8 @@ class RefreshAccessAndRefreshController(
         raw_token = payload["refresh_token"]
         claims = jwt.decode(
             raw_token,
-            self.jwt_secret,
+            # Same fallback dmr itself uses for its token controllers.
+            self.jwt_secret or settings.SECRET_KEY,
             algorithms=[settings.JWT_ALGORITHM],
         )
         token_jti = claims.get("jti")

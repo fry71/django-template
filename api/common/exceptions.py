@@ -1,7 +1,7 @@
 # api/common/exceptions.py
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, ClassVar
 
 
 class DomainError(Exception):
@@ -12,7 +12,7 @@ class DomainError(Exception):
     """
 
     status_code: int = 400
-    code: str | None = None
+    code: ClassVar[str | None] = None
 
     def __init__(
         self,
@@ -29,35 +29,35 @@ class NotFoundError(DomainError):
     """Resource not found."""
 
     status_code: int = 404
-    code: str = "not_found"
+    code = "not_found"
 
 
 class ConflictError(DomainError):
     """Conflict with current resource state (e.g. duplicate)."""
 
     status_code: int = 409
-    code: str = "conflict"
+    code = "conflict"
 
 
 class ValidationError(DomainError):
     """Business-rule validation error."""
 
     status_code: int = 400
-    code: str = "validation_error"
+    code = "validation_error"
 
 
 class PermissionDeniedError(DomainError):
     """Insufficient permissions for the operation."""
 
     status_code: int = 403
-    code: str = "permission_denied"
+    code = "permission_denied"
 
 
 class UnauthorizedError(DomainError):
     """User is not authenticated."""
 
     status_code: int = 401
-    code: str = "unauthorized"
+    code = "unauthorized"
 
 
 type ErrorContext = dict[str, Any] | None
