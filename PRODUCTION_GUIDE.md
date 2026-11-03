@@ -78,11 +78,14 @@ SECURE_BROWSER_XSS_FILTER = True
 X_FRAME_OPTIONS = 'DENY'
 ```
 
-### Rate Limiting
+### Rate Limiting and login lockout
+Auth endpoints are throttled in code (dmr `AsyncThrottle`, per-IP and
+per-account); the failed-login counter lives in the cache, so production
+needs Redis as the default cache backend (`USE_REDIS_FOR_CACHE=true`).
 ```bash
-AXES_ENABLED=true
-AXES_FAILURE_LIMIT=5
-AXES_COOLOFF_TIME=1  # hour
+USE_REDIS_FOR_CACHE=true
+LOGIN_MAX_FAILED_ATTEMPTS=5   # failures before the account is locked
+LOGIN_LOCKOUT_SECONDS=900     # lockout window
 ```
 
 ## 📊 Monitoring and logging

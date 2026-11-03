@@ -51,8 +51,6 @@ X_FRAME_OPTIONS = getenv("X_FRAME_OPTIONS", "DENY")
 
 # Rate limiting
 RATELIMIT_USE_CACHE = "default"
-AXES_FAILURE_LIMIT = int(getenv("AXES_FAILURE_LIMIT", "5"))
-AXES_COOLOFF_TIME = int(getenv("AXES_COOLOFF_TIME", "1"))  # hour
 
 ALLOWED_HOSTS = [
     host.strip() for host in getenv("ALLOWED_HOSTS", "127.0.0.1,localhost").split(",")

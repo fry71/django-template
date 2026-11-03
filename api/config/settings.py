@@ -13,6 +13,5 @@ include(
     "sentry.py",
     "silk.py",
     "cache.py",
-    "axes.py",
     "taskiq.py",
 )

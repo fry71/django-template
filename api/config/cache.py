@@ -73,6 +73,13 @@ if USE_REDIS_FOR_CACHE:
         CACHES["default"] = {
             "BACKEND": "django.core.cache.backends.dummy.DummyCache",
         }
+elif _UNDER_PYTEST:
+    # LocMem keeps dmr throttling and the login lockout counters functional
+    # in tests while staying in-process; conftest clears it between tests.
+    CACHES["default"] = {
+        "BACKEND": "django.core.cache.backends.locmem.LocMemCache",
+        "LOCATION": "test-cache",
+    }
 else:
     logger.warning("Using dummy cache")
     CACHES["default"] = {

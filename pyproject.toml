@@ -54,7 +54,6 @@ dependencies = [
     #    "openai",
     # Utilities
     "python-dotenv>=1.0.0",
-    "django-axes",
     "valkey",
     "boto3",
     "sentry_sdk",
@@ -131,7 +130,6 @@ module = [
     "channels.generic.websocket",
     "storages.backends.s3",
     "cacheops",
-    "axes.models",
 ]
 ignore_missing_imports = true
 
@@ -217,5 +215,6 @@ ignore = [
 "main.py" = ["T201"]
 "api/web/asgi.py" = ["E402"]  # routing imported after Django setup
 "api/common/controllers.py" = ["ARG002"]  # DMR passes endpoint/controller by contract
+"api/common/throttling.py" = ["ARG002"]  # DMR passes endpoint by contract
 "api/user/api.py" = ["TC002", "ARG002"]  # DMR runtime types / framework args
 "api/config/cache.py" = ["TRY301"]  # raise inside try to fall back to dummy cache

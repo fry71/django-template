@@ -14,6 +14,7 @@ A production-ready Django template showcasing modern web development: a fully **
 - 💬 **Chat Rooms (golden path)** — JWT REST for rooms/messages; membership-checked WebSocket `WS /ws/chat/<room_id>/` with first-frame `{"type":"auth","token":"<access JWT>"}` (token never in the URL)
 - 🧱 **Thin boundary** — Pydantic schemas live in `schema.py`, services take frozen dataclass commands (`services/cmds.py`), `mappers.py` is the only seam
 - 🔐 **JWT Authentication** — token-based auth for the API (`/api/user/token`, `/api/user/refresh`), refresh-token rotation with jti denylist; access TTL 5 minutes
+- 🛡️ **Brute-force protection** — per-IP and per-account throttling (dmr `AsyncThrottle`) plus a cache-backed failed-login lockout (`api/common/lockout.py`), all async
 - 🤖 **Telegram Bot** — aiogram 3 with routers/handlers (polling mode)
 - 🎨 **WhiteNoise** — static files served with compression + manifests; media via nginx/S3
 - 🔄 **Background Tasks** — Taskiq jobs dispatched after DB commit (`task.kiq(...)`)

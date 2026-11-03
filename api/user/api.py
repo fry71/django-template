@@ -8,6 +8,7 @@ from typing import TYPE_CHECKING, TypedDict, cast
 
 import jwt
 from django.conf import settings
+from django.db import IntegrityError
 from dmr import modify
 from dmr.components import (  # DMR resolves these at runtime
     Body,
@@ -15,6 +16,7 @@ from dmr.components import (  # DMR resolves these at runtime
     Path,
     Query,
 )
+from dmr.exceptions import NotAuthenticatedError
 from dmr.parsers import MultiPartParser
 from dmr.plugins.pydantic import PydanticSerializer
 from dmr.security.jwt import JWTAsyncAuth
@@ -27,6 +29,7 @@ from dmr.security.jwt.views import (
 )
 from dmr.throttling import AsyncThrottle
 
+from api.common import lockout
 from api.common.controllers import (
     ERROR_RESPONSES,
     BaseAsyncController,
@@ -35,10 +38,12 @@ from api.common.controllers import (
 from api.common.exceptions import (
     NotFoundError,
     PermissionDeniedError,
+    RateLimitError,
     UnauthorizedError,
     ValidationError,
 )
 from api.common.pagination import build_page, paginate
+from api.common.throttling import UsernameFromBody
 from api.user import mappers, schema
 from api.user.models import UsedRefreshToken
 from api.user.models import User as UserModel
@@ -57,8 +62,17 @@ logger = logging.getLogger(__name__)
 
 # Brute-force protection on auth endpoints (dmr docs: never have auth
 # without throttling before it).
+# Per-client burst guard, keyed by the address the request came from:
 _AUTH_THROTTLE = AsyncThrottle(max_requests=10, duration_in_seconds=60)
-
+# Per-account guard: an attacker spraying a single username from many
+# addresses is limited here, while api.common.lockout counts the failures
+# and keeps the account locked for a cooloff window.
+LOGIN_ATTEMPTS_PER_MINUTE = 10
+_LOGIN_THROTTLE = AsyncThrottle(
+    max_requests=LOGIN_ATTEMPTS_PER_MINUTE,
+    duration_in_seconds=60,
+    cache_key=UsernameFromBody(),
+)
 
 
 def _access_lifetime_minutes() -> int:
@@ -93,16 +107,22 @@ class _RoomIdPath(TypedDict):
 
 
 class ObtainAccessAndRefreshController(
+    DomainErrorMixin,
     ObtainTokensAsyncController[
         PydanticSerializer,
         ObtainTokensPayload,
         ObtainTokensResponse,
     ],
 ):
-    """Issue an access and refresh token pair for valid credentials."""
+    """Issue an access and refresh token pair for valid credentials.
+
+    Failed attempts are counted per account in ``api.common.lockout``: after
+    ``LOGIN_MAX_FAILED_ATTEMPTS`` the account is locked for
+    ``LOGIN_LOCKOUT_SECONDS`` and answers 429 even for correct credentials.
+    """
 
     jwt_secret = settings.JWT_SECRET_KEY
-    throttling = (_AUTH_THROTTLE,)
+    throttling = (_AUTH_THROTTLE, _LOGIN_THROTTLE)
 
     async def convert_auth_payload(
         self,
@@ -110,6 +130,20 @@ class ObtainAccessAndRefreshController(
     ) -> ObtainTokensPayload:
         """Pass the typed login payload through to django authenticate."""
         return payload
+
+    async def login(self, parsed_body: ObtainTokensPayload) -> ObtainTokensResponse:
+        """Authenticate the user, tracking failed attempts for lockout."""
+        username = parsed_body["username"]
+        if await lockout.is_locked(username):
+            msg = "Too many failed login attempts, try again later"
+            raise RateLimitError(msg)
+        try:
+            response = await super().login(parsed_body)
+        except NotAuthenticatedError:
+            await lockout.register_failure(username)
+            raise
+        await lockout.reset(username)
+        return response
 
     async def make_api_response(self) -> ObtainTokensResponse:
         """Build the access/refresh token pair."""
@@ -136,8 +170,8 @@ class RefreshAccessAndRefreshController(
 ):
     """Issue a fresh token pair from a valid refresh token.
 
-    Implements rotation: the presented refresh token's jti is denylisted,
-    so each refresh token can be used only once.
+    Implements rotation: the presented refresh token's jti is denylisted
+    before the new pair is issued, so each refresh token works only once.
     """
 
     jwt_secret = settings.JWT_SECRET_KEY
@@ -145,10 +179,12 @@ class RefreshAccessAndRefreshController(
     throttling = (_AUTH_THROTTLE,)
 
     async def convert_refresh_payload(self, payload: RefreshTokenPayload) -> str:
-        """Denylist the presented refresh token's jti (rotation).
+        """Validate the token's claims and burn its jti (rotation).
 
-        Token signature, type, expiry, and user existence are validated
-        by the parent ``refresh()`` flow after this hook returns.
+        The unique ``jti`` column is the single point of truth: two
+        concurrent refreshes of the same token race on this INSERT and
+        exactly one of them wins. Signature, type, expiry, and user
+        existence are validated by the parent ``refresh()`` flow afterwards.
         """
         raw_token = payload["refresh_token"]
         claims = jwt.decode(
@@ -158,19 +194,24 @@ class RefreshAccessAndRefreshController(
             algorithms=[settings.JWT_ALGORITHM],
         )
         token_jti = claims.get("jti")
-        if not token_jti:
-            msg = "Refresh token has no jti"
+        expires_at = claims.get("exp")
+        if not token_jti or not expires_at:
+            msg = "Refresh token has no jti or exp claim"
             raise UnauthorizedError(msg)
-        if await UsedRefreshToken.objects.filter(jti=token_jti).aexists():
+        try:
+            await UsedRefreshToken.objects.acreate(
+                jti=token_jti,
+                expires_at=datetime.fromtimestamp(expires_at, tz=UTC),
+            )
+        except IntegrityError as exc:
             msg = "Refresh token already used"
-            raise UnauthorizedError(msg)
-        self._raw_refresh_claims = claims
+            raise UnauthorizedError(msg) from exc
         return raw_token
 
     async def make_api_response(self) -> ObtainTokensResponse:
-        """Build the refreshed pair and record the rotated jti."""
+        """Build the refreshed pair; the used jti is already denylisted."""
         now = datetime.now(UTC)
-        response: ObtainTokensResponse = {
+        return {
             "access_token": self.create_jwt_token(
                 expiration=now + timedelta(minutes=_access_lifetime_minutes()),
                 token_type="access",
@@ -180,21 +221,6 @@ class RefreshAccessAndRefreshController(
                 token_type="refresh",
             ),
         }
-        await self._denylist_used_refresh()
-        return response
-
-    async def _denylist_used_refresh(self) -> None:
-        """Store the presented refresh token's jti until it expires."""
-        claims = getattr(self, "_raw_refresh_claims", None)
-        if not claims:
-            return
-        try:
-            await UsedRefreshToken.objects.acreate(
-                jti=claims["jti"],
-                expires_at=datetime.fromtimestamp(claims["exp"], tz=UTC),
-            )
-        except Exception:
-            logger.exception("Failed to denylist rotated refresh token")
 
 
 def _current_user(controller: BaseAsyncController) -> UserModel:

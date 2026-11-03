@@ -8,6 +8,7 @@ from django.contrib.auth import get_user_model
 from django.core.files.uploadedfile import SimpleUploadedFile
 from django.test.client import BOUNDARY, MULTIPART_CONTENT, encode_multipart
 
+from api.common.lockout import MAX_FAILED_LOGINS
 from api.user.limits import MAX_PHOTO_SIZE_BYTES
 from api.user.models import Message
 
@@ -552,3 +553,67 @@ class TestPhotoApi:
 
         assert resp.status_code == 400, resp.json()
         assert resp.json()["detail"][0]["loc"][-1] == "image"
+
+
+@pytest.mark.django_db(transaction=True)
+class TestLoginLockout:
+    async def _login(
+        self,
+        async_client,
+        username: str,
+        password: str,
+    ) -> HttpResponse:
+        return await async_client.post(
+            "/api/user/token",
+            data={"username": username, "password": password},
+        )
+
+    async def test_lockout_after_failed_logins(
+        self, async_client, user_data: dict[str, str]
+    ) -> None:
+        await _register_user(async_client, user_data)
+
+        for _ in range(MAX_FAILED_LOGINS):
+            failed = await self._login(
+                async_client,
+                user_data["username"],
+                "definitely-wrong",
+            )
+            assert failed.status_code == 401
+
+        locked = await self._login(
+            async_client,
+            user_data["username"],
+            user_data["password"],
+        )
+
+        assert locked.status_code == 429
+        assert _error_type(locked.json()) == "rate_limited"
+
+    async def test_successful_login_resets_failures(
+        self, async_client, user_data: dict[str, str]
+    ) -> None:
+        await _register_user(async_client, user_data)
+        await self._login(async_client, user_data["username"], "definitely-wrong")
+
+        first = await self._login(
+            async_client,
+            user_data["username"],
+            user_data["password"],
+        )
+        assert first.status_code == 200
+
+        for _ in range(MAX_FAILED_LOGINS - 1):
+            failed = await self._login(
+                async_client,
+                user_data["username"],
+                "definitely-wrong",
+            )
+            assert failed.status_code == 401
+
+        second = await self._login(
+            async_client,
+            user_data["username"],
+            user_data["password"],
+        )
+        assert second.status_code == 200

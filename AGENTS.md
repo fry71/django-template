@@ -74,7 +74,16 @@ Follow https://django-modern-rest.readthedocs.io/llms-full.txt. Key points:
 ## Security rules
 
 - JWT: access tokens only for WS/API auth; refresh tokens rotate — each jti
-  is denylisted in `UsedRefreshToken` after use.
+  is denylisted in `UsedRefreshToken` before the new pair is issued (the
+  unique `jti` column is what makes concurrent refreshes safe).
+- Brute force is async-native — no django-axes: auth endpoints carry dmr
+  `AsyncThrottle` limits (per-IP burst in `_AUTH_THROTTLE`, per-account key
+  `UsernameFromBody` from `api/common/throttling.py`), and
+  `api/common/lockout.py` keeps a cache-backed failed-login counter
+  (`LOGIN_MAX_FAILED_ATTEMPTS`, `LOGIN_LOCKOUT_SECONDS`). A locked account gets
+  429 `rate_limited` even with the right password; the counter is cleared on a
+  successful login and fails open if the cache is unavailable. It needs a
+  working shared cache in production (`USE_REDIS_FOR_CACHE=true`).
 - Static files: WhiteNoise middleware (`CompressedManifestStaticFilesStorage`);
   media: nginx/S3 — never hand-rolled ASGI file serving.
 - Secrets come from env (`DJANGO_SECRET_KEY`, `JWT_SECRET_KEY`, `DATABASE_URL`,

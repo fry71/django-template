@@ -60,4 +60,11 @@ class UnauthorizedError(DomainError):
     code = "unauthorized"
 
 
+class RateLimitError(DomainError):
+    """Too many requests or attempts; the caller should retry later."""
+
+    status_code: int = 429
+    code = "rate_limited"
+
+
 type ErrorContext = dict[str, Any] | None
