@@ -7,6 +7,8 @@ from django.contrib import admin
 from django.shortcuts import redirect
 from django.urls import include, path
 from dmr.openapi.views import OpenAPIJsonView, SwaggerView
+from dmr.plugins.pydantic import PydanticSerializer
+from dmr.routing import build_404_handler, build_500_handler
 
 from api.config.silk import USE_SILK
 from api.config.storage import USE_S3_FOR_STATIC
@@ -27,3 +29,8 @@ if USE_SILK:
 
 if not USE_S3_FOR_STATIC:
     urlpatterns += static(settings.STATIC_URL, document_root=settings.STATIC_ROOT)
+
+# JSON error models for unmatched API URLs; non-API paths keep Django HTML.
+# Django ignores these overrides while DEBUG is on.
+handler404 = build_404_handler(router.prefix, serializer=PydanticSerializer)
+handler500 = build_500_handler(router.prefix, serializer=PydanticSerializer)

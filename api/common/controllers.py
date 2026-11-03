@@ -5,7 +5,7 @@ from http import HTTPStatus
 from typing import TYPE_CHECKING
 
 from dmr import Controller, ResponseSpec
-from dmr.errors import ErrorModel, format_error
+from dmr.errors import ErrorDetail, ErrorModel, format_error
 from dmr.plugins.pydantic import PydanticSerializer
 
 from api.common.exceptions import DomainError
@@ -20,7 +20,30 @@ ERROR_RESPONSES = (
     ResponseSpec(ErrorModel, status_code=HTTPStatus.FORBIDDEN),
     ResponseSpec(ErrorModel, status_code=HTTPStatus.NOT_FOUND),
     ResponseSpec(ErrorModel, status_code=HTTPStatus.CONFLICT),
+    ResponseSpec(ErrorModel, status_code=HTTPStatus.TOO_MANY_REQUESTS),
 )
+
+
+def _domain_error_model(exc: DomainError) -> ErrorModel:
+    """Build an ErrorModel for a domain error.
+
+    Field-level errors are positioned exactly like DMR positions its own
+    validation errors (``["parsed_body", field]``), so clients can handle
+    transport and domain validation with the same code.
+    """
+    if not exc.fields:
+        return format_error(exc.detail, error_type=exc.code)
+
+    detail: list[ErrorDetail] = []
+    for field_name, messages in exc.fields.items():
+        for message in messages:
+            field_error = format_error(
+                message,
+                loc=["parsed_body", field_name],
+                error_type=exc.code,
+            )
+            detail.extend(field_error["detail"])
+    return {"detail": detail}
 
 
 class DomainErrorMixin:
@@ -33,16 +56,12 @@ class DomainErrorMixin:
         exc: Exception,
     ) -> HttpResponse:
         """Convert a DomainError into an ErrorModel response."""
-        if isinstance(exc, DomainError):
-            return self.to_error(  # type: ignore[attr-defined]
-                format_error(
-                    exc.detail,
-                    loc=["body"],
-                    error_type=exc.code,
-                ),
-                status_code=HTTPStatus(exc.status_code),
-            )
-        raise exc
+        if not isinstance(exc, DomainError):
+            raise exc
+        return self.to_error(  # type: ignore[attr-defined]
+            _domain_error_model(exc),
+            status_code=HTTPStatus(exc.status_code),
+        )
 
 
 class BaseAsyncController(DomainErrorMixin, Controller[PydanticSerializer]):
