@@ -73,11 +73,17 @@ CORS_ALLOWED_ORIGINS = getenv("CORS_ALLOWED_ORIGINS", "http://localhost").split(
 
 DATA_UPLOAD_MAX_MEMORY_SIZE = 5242880
 
-# Response validation is a safety net for development and tests; it is off
-# in production for speed (dmr: "keep it on in development"). Tests always
-# enable it, even when the environment sets DJANGO_DEBUG=false.
+# dmr recommendation: keep response validation on in development (and tests)
+# and disable it in production only —
+# https://django-modern-rest.readthedocs.io/en/latest/pages/validation.html
+#
+# Validation is on by default, so this settings dict only has to switch it
+# off for a real production run. Tests keep it on even when DJANGO_DEBUG is
+# unset, because that is how CI runs, and validation is exactly what catches
+# undescribed headers there.
 _UNDER_PYTEST = "pytest" in sys.modules
+_PRODUCTION = not DEBUG and not _UNDER_PYTEST
 
-DMR_SETTINGS = {
-    Settings.validate_responses: DEBUG or _UNDER_PYTEST,
-}
+DMR_SETTINGS: dict[Settings, bool] = {}
+if _PRODUCTION:
+    DMR_SETTINGS[Settings.validate_responses] = False
