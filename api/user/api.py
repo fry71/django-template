@@ -134,9 +134,14 @@ class ObtainAccessAndRefreshController(
     async def login(self, parsed_body: ObtainTokensPayload) -> ObtainTokensResponse:
         """Authenticate the user, tracking failed attempts for lockout."""
         username = parsed_body["username"]
-        if await lockout.is_locked(username):
+        state = await lockout.check(username)
+        if state.locked:
             msg = "Too many failed login attempts, try again later"
-            raise RateLimitError(msg)
+            raise RateLimitError(
+                msg,
+                retry_after=state.retry_after,
+                limit=lockout.MAX_FAILED_LOGINS,
+            )
         try:
             response = await super().login(parsed_body)
         except NotAuthenticatedError:

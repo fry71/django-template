@@ -66,5 +66,10 @@ class RateLimitError(DomainError):
     status_code: int = 429
     code = "rate_limited"
 
+    def __init__(self, detail: str, *, retry_after: int, limit: int) -> None:
+        super().__init__(detail)
+        self.retry_after = retry_after
+        self.limit = limit
+
 
 type ErrorContext = dict[str, Any] | None

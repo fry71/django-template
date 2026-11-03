@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+import sys
 from os import getenv
 
 from dmr.settings import Settings
@@ -72,8 +73,11 @@ CORS_ALLOWED_ORIGINS = getenv("CORS_ALLOWED_ORIGINS", "http://localhost").split(
 
 DATA_UPLOAD_MAX_MEMORY_SIZE = 5242880
 
+# Response validation is a safety net for development and tests; it is off
+# in production for speed (dmr: "keep it on in development"). Tests always
+# enable it, even when the environment sets DJANGO_DEBUG=false.
+_UNDER_PYTEST = "pytest" in sys.modules
+
 DMR_SETTINGS = {
-    # Response validation is a dev-time safety net; disable it in production
-    # for speed per dmr docs ("Keep it on in development").
-    Settings.validate_responses: not DEBUG,
+    Settings.validate_responses: DEBUG or _UNDER_PYTEST,
 }

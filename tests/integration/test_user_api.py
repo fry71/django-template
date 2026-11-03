@@ -589,6 +589,10 @@ class TestLoginLockout:
 
         assert locked.status_code == 429
         assert _error_type(locked.json()) == "rate_limited"
+        # Lockout answers with the same rate-limit headers as the throttle.
+        assert locked.headers["X-RateLimit-Limit"] == str(MAX_FAILED_LOGINS)
+        assert locked.headers["X-RateLimit-Remaining"] == "0"
+        assert int(locked.headers["Retry-After"]) > 0
 
     async def test_successful_login_resets_failures(
         self, async_client, user_data: dict[str, str]

@@ -58,8 +58,11 @@ Follow https://django-modern-rest.readthedocs.io/llms-full.txt. Key points:
 - Never return raw `HttpResponse` from endpoints — raise `DomainError`
   or use `to_response`/`to_error`.
 - Auth endpoints MUST be throttled (`throttling = (_AUTH_THROTTLE,)`).
-- Response validation stays ON in development and OFF in production
-  (`DMR_SETTINGS` in `api/config/security.py`).
+- Response validation stays ON in development and in tests (even with
+  `DJANGO_DEBUG=false`) and OFF in production (`DMR_SETTINGS` in
+  `api/config/security.py`). Because tests validate responses, every
+  status code an endpoint can return must be declared with its headers —
+  see `ERROR_RESPONSES`.
 
 ## Chat domain model
 
