@@ -343,6 +343,8 @@ class TestUserApi:
             content_type="application/json",
         )
         assert replay.status_code == 401
+        # RFC 9110: every 401 advertises the scheme to use.
+        assert replay.headers["WWW-Authenticate"] == "Bearer"
 
     async def test_create_message(self, async_client, user_data: dict[str, str]) -> None:
         await _register_user(async_client, user_data)
@@ -580,6 +582,7 @@ class TestLoginLockout:
                 "definitely-wrong",
             )
             assert failed.status_code == 401
+            assert failed.headers["WWW-Authenticate"] == "Bearer"
 
         locked = await self._login(
             async_client,
@@ -614,6 +617,7 @@ class TestLoginLockout:
                 "definitely-wrong",
             )
             assert failed.status_code == 401
+            assert failed.headers["WWW-Authenticate"] == "Bearer"
 
         second = await self._login(
             async_client,

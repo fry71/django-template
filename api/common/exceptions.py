@@ -53,13 +53,6 @@ class PermissionDeniedError(DomainError):
     code = "permission_denied"
 
 
-class UnauthorizedError(DomainError):
-    """User is not authenticated."""
-
-    status_code: int = 401
-    code = "unauthorized"
-
-
 class RateLimitError(DomainError):
     """Too many requests or attempts; the caller should retry later."""
 

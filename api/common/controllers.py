@@ -15,22 +15,24 @@ if TYPE_CHECKING:
     from django.http import HttpResponse
     from dmr.endpoint import Endpoint
 
-# Headers are documented for clients but not enforced on domain errors:
-# dmr adds ``WWW-Authenticate`` when its own auth rejects a request, and the
-# throttle adds the rate-limit headers on 429, while a domain error of the same
-# status carries neither (``skip_validation`` keeps response validation happy).
+# Every 401 needs a challenge (RFC 9110, section 15.5.2) and every 429 needs
+# retry information, so both are part of the declared contract and enforced by
+# response validation: dmr adds them for its own auth and throttling, and
+# ``_error_headers`` adds them for domain errors.
+AUTHENTICATION_REQUIRED = ResponseSpec(
+    ErrorModel,
+    status_code=HTTPStatus.UNAUTHORIZED,
+    headers={
+        "WWW-Authenticate": HeaderSpec(
+            description="Auth scheme that rejected the request",
+            example="Bearer",
+        ),
+    },
+)
+
 ERROR_RESPONSES = (
     ResponseSpec(ErrorModel, status_code=HTTPStatus.BAD_REQUEST),
-    ResponseSpec(
-        ErrorModel,
-        status_code=HTTPStatus.UNAUTHORIZED,
-        headers={
-            "WWW-Authenticate": HeaderSpec(
-                description="Auth scheme that rejected the request",
-                skip_validation=True,
-            ),
-        },
-    ),
+    AUTHENTICATION_REQUIRED,
     ResponseSpec(ErrorModel, status_code=HTTPStatus.FORBIDDEN),
     ResponseSpec(ErrorModel, status_code=HTTPStatus.NOT_FOUND),
     ResponseSpec(ErrorModel, status_code=HTTPStatus.CONFLICT),
@@ -40,19 +42,15 @@ ERROR_RESPONSES = (
         headers={
             "Retry-After": HeaderSpec(
                 description="Seconds to wait before retrying",
-                skip_validation=True,
             ),
             "X-RateLimit-Limit": HeaderSpec(
                 description="Requests allowed per window",
-                skip_validation=True,
             ),
             "X-RateLimit-Remaining": HeaderSpec(
                 description="Requests left in the window",
-                skip_validation=True,
             ),
             "X-RateLimit-Reset": HeaderSpec(
                 description="Seconds until the window resets",
-                skip_validation=True,
             ),
         },
     ),
@@ -81,17 +79,17 @@ def _domain_error_model(exc: DomainError) -> ErrorModel:
     return {"detail": detail}
 
 
-def _rate_limit_headers(exc: DomainError) -> dict[str, str] | None:
-    """Return rate-limit headers for a lockout response."""
-    if not isinstance(exc, RateLimitError):
-        return None
-    retry_after = str(exc.retry_after)
-    return {
-        "Retry-After": retry_after,
-        "X-RateLimit-Limit": str(exc.limit),
-        "X-RateLimit-Remaining": "0",
-        "X-RateLimit-Reset": retry_after,
-    }
+def _error_headers(exc: DomainError) -> dict[str, str] | None:
+    """Return the protocol headers that must accompany a domain error."""
+    if isinstance(exc, RateLimitError):
+        retry_after = str(exc.retry_after)
+        return {
+            "Retry-After": retry_after,
+            "X-RateLimit-Limit": str(exc.limit),
+            "X-RateLimit-Remaining": "0",
+            "X-RateLimit-Reset": retry_after,
+        }
+    return None
 
 
 class DomainErrorMixin:
@@ -109,7 +107,7 @@ class DomainErrorMixin:
         return self.to_error(  # type: ignore[attr-defined]
             _domain_error_model(exc),
             status_code=HTTPStatus(exc.status_code),
-            headers=_rate_limit_headers(exc),
+            headers=_error_headers(exc),
         )
 
 

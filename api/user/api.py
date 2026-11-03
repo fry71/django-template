@@ -19,6 +19,7 @@ from dmr.components import (  # DMR resolves these at runtime
 from dmr.exceptions import NotAuthenticatedError
 from dmr.parsers import MultiPartParser
 from dmr.plugins.pydantic import PydanticSerializer
+from dmr.security.base import NO_STORE_HEADERS
 from dmr.security.jwt import JWTAsyncAuth
 from dmr.security.jwt.views import (
     ObtainTokensAsyncController,
@@ -31,6 +32,7 @@ from dmr.throttling import AsyncThrottle
 
 from api.common import lockout
 from api.common.controllers import (
+    AUTHENTICATION_REQUIRED,
     ERROR_RESPONSES,
     BaseAsyncController,
     DomainErrorMixin,
@@ -39,7 +41,6 @@ from api.common.exceptions import (
     NotFoundError,
     PermissionDeniedError,
     RateLimitError,
-    UnauthorizedError,
     ValidationError,
 )
 from api.common.pagination import build_page, paginate
@@ -59,6 +60,16 @@ if TYPE_CHECKING:
     from django.core.files.uploadedfile import UploadedFile
 
 logger = logging.getLogger(__name__)
+
+# RFC 9110 (15.5.2) requires a challenge on every 401. dmr adds it for its own
+# auth, but the token endpoints authenticate with a body, so the challenge and
+# the matching response spec (``AUTHENTICATION_REQUIRED``) are supplied here.
+
+
+def _auth_challenge() -> dict[str, str]:
+    """Return the challenge sent with every 401 of the token endpoints."""
+    return {"WWW-Authenticate": "Bearer"}
+
 
 # Brute-force protection on auth endpoints (dmr docs: never have auth
 # without throttling before it).
@@ -124,6 +135,15 @@ class ObtainAccessAndRefreshController(
     jwt_secret = settings.JWT_SECRET_KEY
     throttling = (_AUTH_THROTTLE, _LOGIN_THROTTLE)
 
+    @classmethod
+    def modify_spec(cls) -> object:
+        """Declare the 401 challenge that dmr's own token spec leaves out."""
+        return modify(
+            status_code=cls.response_status_code,
+            extra_responses=[AUTHENTICATION_REQUIRED],
+            headers=NO_STORE_HEADERS,
+        )
+
     async def convert_auth_payload(
         self,
         payload: ObtainTokensPayload,
@@ -144,8 +164,10 @@ class ObtainAccessAndRefreshController(
             )
         try:
             response = await super().login(parsed_body)
-        except NotAuthenticatedError:
+        except NotAuthenticatedError as exc:
             await lockout.register_failure(username)
+            # dmr's login flow builds a bare 401; add the RFC 9110 challenge.
+            exc.headers = _auth_challenge()
             raise
         await lockout.reset(username)
         return response
@@ -181,6 +203,16 @@ class RefreshAccessAndRefreshController(
 
     jwt_secret = settings.JWT_SECRET_KEY
     responses = ERROR_RESPONSES
+
+    @classmethod
+    def modify_spec(cls) -> object:
+        """Declare the 401 challenge that dmr's own token spec leaves out."""
+        return modify(
+            status_code=cls.response_status_code,
+            extra_responses=[AUTHENTICATION_REQUIRED],
+            headers=NO_STORE_HEADERS,
+        )
+
     throttling = (_AUTH_THROTTLE,)
 
     async def convert_refresh_payload(self, payload: RefreshTokenPayload) -> str:
@@ -202,7 +234,7 @@ class RefreshAccessAndRefreshController(
         expires_at = claims.get("exp")
         if not token_jti or not expires_at:
             msg = "Refresh token has no jti or exp claim"
-            raise UnauthorizedError(msg)
+            raise NotAuthenticatedError(msg, headers=_auth_challenge())
         try:
             await UsedRefreshToken.objects.acreate(
                 jti=token_jti,
@@ -210,7 +242,7 @@ class RefreshAccessAndRefreshController(
             )
         except IntegrityError as exc:
             msg = "Refresh token already used"
-            raise UnauthorizedError(msg) from exc
+            raise NotAuthenticatedError(msg, headers=_auth_challenge()) from exc
         return raw_token
 
     async def make_api_response(self) -> ObtainTokensResponse:
@@ -233,7 +265,7 @@ def _current_user(controller: BaseAsyncController) -> UserModel:
     user = controller.request.user
     if not isinstance(user, UserModel):
         msg = "Expected an authenticated user"
-        raise UnauthorizedError(msg)
+        raise NotAuthenticatedError(msg, headers=_auth_challenge())
     return user
 
 

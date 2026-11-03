@@ -57,6 +57,9 @@ Follow https://django-modern-rest.readthedocs.io/llms-full.txt. Key points:
   via `BaseAsyncController.responses` / `ERROR_RESPONSES`.
 - Never return raw `HttpResponse` from endpoints — raise `DomainError`
   or use `to_response`/`to_error`.
+- Every `401` carries `WWW-Authenticate` (RFC 9110): dmr adds it for its own
+  auth, domain 401s raise `NotAuthenticatedError(headers=...)`, and the token
+  controllers override `modify_spec()` because dmr's JWT spec omits it.
 - Auth endpoints MUST be throttled (`throttling = (_AUTH_THROTTLE,)`).
 - Response validation stays ON in development and in tests (even with
   `DJANGO_DEBUG=false`) and OFF in production (`DMR_SETTINGS` in
