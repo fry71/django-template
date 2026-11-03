@@ -7,6 +7,8 @@ from typing import Any, Literal, TypedDict
 from dmr.pagination import Paginated
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
+from api.user.limits import ALLOWED_IMAGE_PREFIX, MAX_PHOTO_SIZE_BYTES
+
 type UserID = int
 type MessageID = int
 type PhotoID = int
@@ -53,6 +55,16 @@ class UserCreateIn(BaseModel):
     patronymic: str | None = _field("Patronymic", default=None)
 
 
+_NOT_NULLABLE_UPDATE_FIELDS = (
+    "username",
+    "email",
+    "first_name",
+    "last_name",
+    "is_staff",
+    "is_active",
+)
+
+
 class UserUpdateIn(BaseModel):
     """Input for partial user update."""
 
@@ -68,6 +80,20 @@ class UserUpdateIn(BaseModel):
     patronymic: str | None = _field("Patronymic", default=None)
     is_staff: bool | None = _field("Staff flag", default=None)
     is_active: bool | None = _field("Active flag", default=None)
+
+    @field_validator(*_NOT_NULLABLE_UPDATE_FIELDS)
+    @classmethod
+    def _reject_explicit_null(cls, raw_value: object) -> object:
+        """Reject an explicit ``null`` for a NOT NULL column.
+
+        Omitting the field means "leave it as is"; sending ``null`` used to
+        reach the database and fail with an IntegrityError. Only nullable
+        columns (``patronymic``) accept an explicit ``null`` to clear them.
+        """
+        if raw_value is None:
+            msg = "null is not allowed for this field; omit it instead"
+            raise ValueError(msg)
+        return raw_value
 
 
 class MessageIn(BaseModel):
@@ -167,11 +193,18 @@ class RoomsPage(Paginated[RoomOut]):
 
 
 class PhotoUploadMeta(BaseModel):
-    """Metadata for a single uploaded photo."""
+    """Metadata for a single uploaded photo.
+
+    Validated by the ``FileMetadata`` component before the endpoint runs,
+    so a wrong type or oversized file is rejected at the boundary.
+    """
 
     name: str = _field("File name")
-    content_type: str = _field("MIME type")
-    size: int = _field("File size in bytes")
+    content_type: str = _field("MIME type", pattern=f"^{ALLOWED_IMAGE_PREFIX}")
+    size: int = _field(
+        "File size in bytes",
+        le=MAX_PHOTO_SIZE_BYTES,
+    )
 
 
 class PhotosUpload(TypedDict):

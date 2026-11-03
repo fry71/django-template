@@ -3,8 +3,8 @@ from __future__ import annotations
 
 import pytest
 
-from api.user.schema import UserCreateIn
 from api.user.services import user_service
+from api.user.services.cmds import CreateUserCmd
 from api.user.tasks import send_welcome_email
 
 
@@ -15,8 +15,7 @@ class TestTaskDispatch:
         user_data: dict[str, str],
         mock_taskiq_tasks,
     ) -> None:
-        payload = UserCreateIn(**user_data)
-        await user_service.create_user(payload)
+        await user_service.create_user(CreateUserCmd(**user_data))
 
         queued = [name for name, _args in mock_taskiq_tasks]
         assert send_welcome_email.task_name in queued

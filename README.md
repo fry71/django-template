@@ -1,6 +1,6 @@
 # Django Gateway — High Performance Django Template
 
-A production-ready Django template showcasing modern web development: a fully **async REST API** built with **django-modern-rest**, **JWT** authentication, **WebSocket chat rooms**, an optional HTML/SSE demo, background jobs with Taskiq, and performance comparable to FastAPI — while keeping all Django batteries.
+A production-ready Django template showcasing modern web development: a fully **async REST API** built with **django-modern-rest**, **JWT** authentication, **WebSocket chat rooms**, background jobs with Taskiq, and performance comparable to FastAPI — while keeping all Django batteries.
 
 [![Python Version](https://img.shields.io/badge/python-3.14-blue.svg)](https://www.python.org/downloads/)
 [![Django Version](https://img.shields.io/badge/django-6.1-green.svg)](https://www.djangoproject.com/)
@@ -12,8 +12,7 @@ A production-ready Django template showcasing modern web development: a fully **
 - 🔧 **Async-first API** — django-modern-rest (DMR) controllers, fully async ORM (`aget`, `acreate`, `aiterator`)
 - 📦 **All Django Batteries** — Admin, ORM, Auth, Forms, Templates
 - 💬 **Chat Rooms (golden path)** — JWT REST for rooms/messages; membership-checked WebSocket `WS /ws/chat/<room_id>/` with first-frame `{"type":"auth","token":"<access JWT>"}` (token never in the URL)
-- 🖥️ **HTML chat demo** — session login + Django form + SSE at `/chat/` (same `Message` model; not a second product)
-- 🧩 **Django 6.1 Template Partials** — `{% partialdef %}` / `{% partial %}` for server-rendered chat messages
+- 🧱 **Thin boundary** — Pydantic schemas live in `schema.py`, services take frozen dataclass commands (`services/cmds.py`), `mappers.py` is the only seam
 - 🔐 **JWT Authentication** — token-based auth for the API (`/api/user/token`, `/api/user/refresh`), refresh-token rotation with jti denylist; access TTL 5 minutes
 - 🤖 **Telegram Bot** — aiogram 3 with routers/handlers (polling mode)
 - 🎨 **WhiteNoise** — static files served with compression + manifests; media via nginx/S3
@@ -40,17 +39,18 @@ api/
 ├── common/          # Shared DTOs, error handling (BaseAsyncController)
 ├── config/          # Split settings (split_settings)
 ├── user/            # User/ChatRoom/RoomMembership/Message/Photo models, DMR controllers,
-│                    # services, WS consumers, forms, views
+│                    # service commands, WS consumers
 │   ├── api.py       # REST controllers (token, users, rooms, messages, photos)
+│   ├── schema.py    # Pydantic request/response models — boundary only
+│   ├── mappers.py   # Pydantic schema <-> service command mapping
 │   ├── consumers.py # WebSocket chat consumer (rooms, membership, rate limit)
-│   ├── views.py     # Chat page, REST send, SSE stream
 │   ├── services/    # Async service layer (user/room/message/photo)
+│   │   └── cmds.py  # Frozen dataclass commands/queries: the service contract
 │   └── migrations/  # Single fresh 0001_initial (regenerated on model change)
+└── web/             # Router, URLconf, health view, ASGI/WSGI
 bot/
 ├── config/bot.py    # aiogram settings (token, running mode)
 └── handlers/        # Routers: /start, /help, echo fallback
-templates/           # Django templates (base, login, chat with partials)
-└── web/             # Router, URLconf, ASGI/WSGI
 ```
 
 ## Quick Start
@@ -109,8 +109,6 @@ make run.server.local
 | --- | --- |
 | `http://127.0.0.1:8000/api/docs` | Swagger UI / OpenAPI docs |
 | `http://127.0.0.1:8000/admin/` | Django admin (`admin` / `admin` by default) |
-| `http://127.0.0.1:8000/login/` | Login page (session auth) |
-| `http://127.0.0.1:8000/chat/` | HTML demo: session chat via SSE (not the API golden path) |
 | `POST /api/user/token` | Obtain JWT access + refresh tokens (throttled: 10 req/min; access TTL 5 min) |
 | `POST /api/user/refresh` | Refresh the token pair (rotation, jti denylist; throttled) |
 | `GET/POST /api/user/users` | List / create users |
@@ -129,20 +127,18 @@ make run.server.local
 then accepts `{"content": "..."}` messages. Membership is checked on auth;
 rate limit 10 msg / 5 s.
 
-**HTML demo only:** `/chat/` is a session-authenticated Django form + **SSE**
-page that uses the same `Message` / `ChatRoom` models (shared `general` room).
-Do not copy both stacks into a product — pick WebSockets for clients, or SSE
-for server-rendered HTML.
-
-The demo page:
-
-- **Send** — `POST /chat/send/` (REST): validates `MessageForm`, creates the message, returns JSON `{id, content, sender, timestamp}`.
-- **Receive** — `GET /chat/stream/` (SSE): streams new messages as `text/event-stream`. Events carry an `id` (message PK) so the browser resumes correctly after reconnects (`Last-Event-ID`).
-- **Rendering** — the message markup is a **Django 6.1 template partial** (`{% partialdef message-item %}` in `api/templates/chat/chat.html`), used both for the initial page render and for SSE-injected HTML — a single source of truth.
+Everything goes through the same models and services: REST creates rooms
+and lists stored messages, the socket broadcasts new ones. There is no second
+(session/SSE) chat stack in the template.
 
 ### Try it
-1. Create two users (`POST /api/user/users` or via admin), log in as each in a separate browser.
-2. Send a message from either user — it appears live in both chats via SSE (messages land in the shared `general` room).
+1. Create two users (`POST /api/user/users` or via admin) and get an access
+   token for each (`POST /api/user/token`).
+2. Create a room as the first user (`POST /api/user/rooms`), join it as the
+   second (`POST /api/user/rooms/{id}/membership`).
+3. Open `const ws = new WebSocket('ws://127.0.0.1:8000/ws/chat/<room_id>/')`,
+   send `{"type": "auth", "token": "<access JWT>"}`, then
+   `{"content": "hello"}` — both sockets receive the message.
 
 ## Testing
 ```bash

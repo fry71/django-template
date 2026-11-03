@@ -5,15 +5,22 @@ import pytest
 
 from api.common.exceptions import PermissionDeniedError
 from api.user.models import ChatRoom, RoomMembership, RoomType
-from api.user.schema import RoomCreateIn
 from api.user.services import room_service
+from api.user.services.cmds import (
+    CreateRoomCmd,
+    EnsureDirectRoomCmd,
+    GetRoomCmd,
+    IsRoomMemberQuery,
+    JoinRoomCmd,
+    LeaveRoomCmd,
+)
 
 
 @pytest.mark.django_db(transaction=True)
 class TestRoomService:
     async def test_create_room_adds_creator_membership(self, test_user) -> None:
-        payload = RoomCreateIn(name="general", is_private=False)
-        room = await room_service.create_room(test_user.id, payload)
+        cmd = CreateRoomCmd(name="general", creator_id=test_user.id)
+        room = await room_service.create_room(cmd)
 
         assert room.name == "general"
         assert room.room_type == RoomType.GROUP
@@ -24,12 +31,12 @@ class TestRoomService:
 
     async def test_get_room(self, test_user) -> None:
         room = await ChatRoom.objects.acreate(name="r1", created_by=test_user)
-        fetched = await room_service.get_room(room.id)
+        fetched = await room_service.get_room(GetRoomCmd(room_id=room.id))
         assert fetched is not None
         assert fetched.id == room.id
 
     async def test_get_room_missing(self) -> None:
-        assert await room_service.get_room(999_999) is None
+        assert await room_service.get_room(GetRoomCmd(room_id=999_999)) is None
 
     async def test_get_or_create_direct_room_idempotent(self, test_user) -> None:
         other = await ChatRoom._meta.apps.get_model("user", "User").objects.acreate(
@@ -37,8 +44,12 @@ class TestRoomService:
             email="peer@example.com",
             password="x",
         )
-        first = await room_service.get_or_create_direct_room(test_user.id, other.id)
-        second = await room_service.get_or_create_direct_room(other.id, test_user.id)
+        first = await room_service.get_or_create_direct_room(
+            EnsureDirectRoomCmd(user_a_id=test_user.id, user_b_id=other.id),
+        )
+        second = await room_service.get_or_create_direct_room(
+            EnsureDirectRoomCmd(user_a_id=other.id, user_b_id=test_user.id),
+        )
 
         assert first.id == second.id
         assert first.room_type == RoomType.DIRECT
@@ -54,10 +65,14 @@ class TestRoomService:
             password="x",
         )
 
-        joined = await room_service.join_room(room.id, joiner.id)
+        joined = await room_service.join_room(
+            JoinRoomCmd(room_id=room.id, user_id=joiner.id),
+        )
 
         assert joined is True
-        assert await room_service.is_member(room.id, joiner.id)
+        assert await room_service.is_member(
+            IsRoomMemberQuery(room_id=room.id, user_id=joiner.id),
+        )
 
     async def test_join_private_room_denied(self, test_user) -> None:
         room = await ChatRoom.objects.acreate(
@@ -66,10 +81,17 @@ class TestRoomService:
             is_private=True,
         )
         with pytest.raises(PermissionDeniedError):
-            await room_service.join_room(room.id, test_user.id)
+            await room_service.join_room(
+                JoinRoomCmd(room_id=room.id, user_id=test_user.id),
+            )
 
     async def test_join_missing_room(self, test_user) -> None:
-        assert await room_service.join_room(999_999, test_user.id) is False
+        assert (
+            await room_service.join_room(
+                JoinRoomCmd(room_id=999_999, user_id=test_user.id),
+            )
+            is False
+        )
 
 
 @pytest.mark.django_db(transaction=True)
@@ -77,13 +99,22 @@ class TestLeaveRoom:
     async def test_leave_room(self, test_user) -> None:
         room = await _make_membership_room(test_user)
 
-        left = await room_service.leave_room(room.id, test_user.id)
+        left = await room_service.leave_room(
+            LeaveRoomCmd(room_id=room.id, user_id=test_user.id),
+        )
 
         assert left is True
-        assert not await room_service.is_member(room.id, test_user.id)
+        assert not await room_service.is_member(
+            IsRoomMemberQuery(room_id=room.id, user_id=test_user.id),
+        )
 
     async def test_leave_missing_room(self, test_user) -> None:
-        assert await room_service.leave_room(999_999, test_user.id) is False
+        assert (
+            await room_service.leave_room(
+                LeaveRoomCmd(room_id=999_999, user_id=test_user.id),
+            )
+            is False
+        )
 
 
 async def _make_membership_room(user) -> ChatRoom:

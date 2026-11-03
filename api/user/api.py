@@ -4,7 +4,7 @@ from __future__ import annotations
 import logging
 from datetime import UTC, datetime, timedelta
 from http import HTTPStatus
-from typing import TypedDict
+from typing import TYPE_CHECKING, TypedDict, cast
 
 import jwt
 from django.conf import settings
@@ -39,21 +39,26 @@ from api.common.exceptions import (
     ValidationError,
 )
 from api.common.pagination import build_page, paginate
-from api.user import schema
+from api.user import mappers, schema
 from api.user.models import UsedRefreshToken
 from api.user.models import User as UserModel
 from api.user.services import (
+    cmds,
     message_service,
     photo_service,
     room_service,
     user_service,
 )
 
+if TYPE_CHECKING:
+    from django.core.files.uploadedfile import UploadedFile
+
 logger = logging.getLogger(__name__)
 
 # Brute-force protection on auth endpoints (dmr docs: never have auth
 # without throttling before it).
 _AUTH_THROTTLE = AsyncThrottle(max_requests=10, duration_in_seconds=60)
+
 
 
 def _access_lifetime_minutes() -> int:
@@ -208,7 +213,7 @@ def _current_user_id(controller: BaseAsyncController) -> int:
 
 async def _existing_user(user_id: int) -> UserModel:
     """Return the user by id or raise NotFoundError."""
-    user = await user_service.get_user(user_id)
+    user = await user_service.get_user(cmds.GetUserCmd(user_id=user_id))
     if user is None:
         msg = "User not found"
         raise NotFoundError(msg)
@@ -226,10 +231,7 @@ class UserListController(BaseAsyncController):
             parsed_query.page,
             parsed_query.page_size,
         )
-        users = [
-            schema.UserOutSchema.model_validate(user, from_attributes=True)
-            for user in records
-        ]
+        users = [mappers.user_out(user) for user in records]
         return build_page(
             schema.UsersPage,
             users,
@@ -241,8 +243,8 @@ class UserListController(BaseAsyncController):
     @modify(status_code=HTTPStatus.CREATED)
     async def post(self, parsed_body: Body[schema.UserCreateIn]) -> schema.UserOutSchema:
         """Create a new user."""
-        user = await user_service.create_user(parsed_body)
-        return schema.UserOutSchema.model_validate(user, from_attributes=True)
+        user = await user_service.create_user(mappers.create_user_cmd(parsed_body))
+        return mappers.user_out(user)
 
 
 class UserDetailController(BaseAsyncController):
@@ -253,7 +255,7 @@ class UserDetailController(BaseAsyncController):
     async def get(self, parsed_path: Path[_UserIdPath]) -> schema.UserOutSchema:
         """Get a user by id."""
         user = await _existing_user(parsed_path["user_id"])
-        return schema.UserOutSchema.model_validate(user, from_attributes=True)
+        return mappers.user_out(user)
 
     async def put(
         self,
@@ -267,11 +269,13 @@ class UserDetailController(BaseAsyncController):
             msg = "No permission to edit"
             raise PermissionDeniedError(msg)
 
-        user = await user_service.update_user(user_id, parsed_body)
+        user = await user_service.update_user(
+            mappers.update_user_cmd(user_id, parsed_body),
+        )
         if user is None:
             msg = "User not found"
             raise NotFoundError(msg)
-        return schema.UserOutSchema.model_validate(user, from_attributes=True)
+        return mappers.user_out(user)
 
     @modify(status_code=HTTPStatus.NO_CONTENT)
     async def delete(self, parsed_path: Path[_UserIdPath]) -> None:
@@ -282,7 +286,7 @@ class UserDetailController(BaseAsyncController):
             msg = "No permission to delete"
             raise PermissionDeniedError(msg)
 
-        deleted = await user_service.delete_user(user_id)
+        deleted = await user_service.delete_user(cmds.DeleteUserCmd(user_id=user_id))
         if not deleted:
             msg = "User not found"
             raise NotFoundError(msg)
@@ -295,9 +299,7 @@ class MeController(BaseAsyncController):
 
     async def get(self) -> schema.UserOutSchema:
         """Return the current authenticated user."""
-        return schema.UserOutSchema.model_validate(
-            _current_user(self), from_attributes=True
-        )
+        return mappers.user_out(_current_user(self))
 
 
 class MessageListController(BaseAsyncController):
@@ -311,18 +313,11 @@ class MessageListController(BaseAsyncController):
     ) -> schema.MessagesPage:
         """Paginated message list with optional search."""
         records, info = await paginate(
-            message_service.message_queryset(
-                room_id=parsed_query.room_id,
-                search=parsed_query.search,
-                sort=parsed_query.sort,
-            ),
+            message_service.message_queryset(mappers.list_messages_query(parsed_query)),
             parsed_query.page,
             parsed_query.page_size,
         )
-        messages = [
-            schema.MessageOut.model_validate(message, from_attributes=True)
-            for message in records
-        ]
+        messages = [mappers.message_out(message) for message in records]
         return build_page(
             schema.MessagesPage,
             messages,
@@ -335,16 +330,16 @@ class MessageListController(BaseAsyncController):
     async def post(self, parsed_body: Body[schema.MessageIn]) -> schema.MessageOut:
         """Create a message in a chat room."""
         user = _current_user(self)
-        if not await room_service.is_member(parsed_body.room_id, user.id):
+        if not await room_service.is_member(
+            cmds.IsRoomMemberQuery(room_id=parsed_body.room_id, user_id=user.id),
+        ):
             msg = "Not a member of this room"
             raise PermissionDeniedError(msg)
         message = await message_service.create_message(
-            sender_id=user.id,
-            room_id=parsed_body.room_id,
-            message_content=parsed_body.content,
+            mappers.create_message_cmd(parsed_body, sender_id=user.id),
         )
         message.sender = user
-        return schema.MessageOut.model_validate(message, from_attributes=True)
+        return mappers.message_out(message)
 
 
 class MessageDetailController(BaseAsyncController):
@@ -359,7 +354,9 @@ class MessageDetailController(BaseAsyncController):
     ) -> None:
         """Delete a message owned by the current user."""
         message_id = parsed_path["message_id"]
-        message = await message_service.get_message(message_id)
+        message = await message_service.get_message(
+            cmds.GetMessageCmd(message_id=message_id),
+        )
         if message is None:
             msg = "Message not found"
             raise NotFoundError(msg)
@@ -368,7 +365,9 @@ class MessageDetailController(BaseAsyncController):
             msg = "No permission to delete message"
             raise PermissionDeniedError(msg)
 
-        await message_service.delete_message(message_id)
+        await message_service.delete_message(
+            cmds.DeleteMessageCmd(message_id=message_id),
+        )
 
 
 class RoomListController(BaseAsyncController):
@@ -380,13 +379,11 @@ class RoomListController(BaseAsyncController):
         """Paginated list of rooms the current user belongs to."""
         user = _current_user(self)
         records, info = await paginate(
-            room_service.room_queryset().filter(members=user),
+            room_service.rooms_for_user(cmds.ListRoomsQuery(user_id=user.id)),
             parsed_query.page,
             parsed_query.page_size,
         )
-        rooms = [
-            schema.RoomOut.model_validate(room, from_attributes=True) for room in records
-        ]
+        rooms = [mappers.room_out(room) for room in records]
         return build_page(
             schema.RoomsPage,
             rooms,
@@ -398,8 +395,10 @@ class RoomListController(BaseAsyncController):
     @modify(status_code=HTTPStatus.CREATED)
     async def post(self, parsed_body: Body[schema.RoomCreateIn]) -> schema.RoomOut:
         """Create a group chat room."""
-        room = await room_service.create_room(_current_user_id(self), parsed_body)
-        return schema.RoomOut.model_validate(room, from_attributes=True)
+        room = await room_service.create_room(
+            mappers.create_room_cmd(parsed_body, creator_id=_current_user_id(self)),
+        )
+        return mappers.room_out(room)
 
 
 class DirectRoomController(BaseAsyncController):
@@ -419,10 +418,9 @@ class DirectRoomController(BaseAsyncController):
             raise ValidationError(msg)
         await _existing_user(parsed_body.peer_id)
         room = await room_service.get_or_create_direct_room(
-            user_a_id=user.id,
-            user_b_id=parsed_body.peer_id,
+            cmds.EnsureDirectRoomCmd(user_a_id=user.id, user_b_id=parsed_body.peer_id),
         )
-        return schema.RoomOut.model_validate(room, from_attributes=True)
+        return mappers.room_out(room)
 
 
 class RoomMembershipController(BaseAsyncController):
@@ -437,8 +435,10 @@ class RoomMembershipController(BaseAsyncController):
     ) -> None:
         """Join a public room."""
         joined = await room_service.join_room(
-            parsed_path["room_id"],
-            _current_user_id(self),
+            cmds.JoinRoomCmd(
+                room_id=parsed_path["room_id"],
+                user_id=_current_user_id(self),
+            ),
         )
         if not joined:
             msg = "Room not found"
@@ -451,8 +451,10 @@ class RoomMembershipController(BaseAsyncController):
     ) -> None:
         """Leave a room."""
         left = await room_service.leave_room(
-            parsed_path["room_id"],
-            _current_user_id(self),
+            cmds.LeaveRoomCmd(
+                room_id=parsed_path["room_id"],
+                user_id=_current_user_id(self),
+            ),
         )
         if not left:
             msg = "Room not found"
@@ -468,14 +470,13 @@ class PhotoListController(BaseAsyncController):
     async def get(self, parsed_query: Query[schema.PageQuery]) -> schema.PhotosPage:
         """List photos for the current user."""
         records, info = await paginate(
-            photo_service.photo_queryset(_current_user_id(self)),
+            photo_service.photo_queryset(
+                cmds.ListPhotosQuery(user_id=_current_user_id(self)),
+            ),
             parsed_query.page,
             parsed_query.page_size,
         )
-        photos = [
-            schema.PhotoOut.model_validate(photo, from_attributes=True)
-            for photo in records
-        ]
+        photos = [mappers.photo_out(photo) for photo in records]
         return build_page(
             schema.PhotosPage,
             photos,
@@ -491,10 +492,17 @@ class PhotoListController(BaseAsyncController):
             schema.PhotosUpload
         ],  # DMR passes it by contract
     ) -> schema.PhotoOut:
-        """Upload a photo for the current user."""
-        uploaded = self.request.FILES.get("image")
-        if uploaded is None:
-            msg = "No image file provided"
-            raise NotFoundError(msg)
-        photo = await photo_service.create_photo(_current_user_id(self), uploaded)
-        return schema.PhotoOut.model_validate(photo, from_attributes=True)
+        """Upload a photo for the current user.
+
+        The file itself is handled by Django (``request.FILES``); the
+        ``parsed_file_metadata`` component validated its MIME type and size,
+        so the endpoint and the service can trust the upload.
+        """
+        photo = await photo_service.create_photo(
+            cmds.UploadPhotoCmd(
+                user_id=_current_user_id(self),
+                # DMR validates the metadata; Django owns the file itself.
+                uploaded=cast("UploadedFile", self.request.FILES["image"]),
+            ),
+        )
+        return mappers.photo_out(photo)

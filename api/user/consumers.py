@@ -12,7 +12,7 @@ from channels.generic.websocket import AsyncWebsocketConsumer
 from django.conf import settings
 
 from api.user.models import User
-from api.user.services import message_service, room_service
+from api.user.services import cmds, message_service, room_service
 
 logger = logging.getLogger(__name__)
 
@@ -96,7 +96,9 @@ class ChatConsumer(AsyncWebsocketConsumer):
             return
         if not await _bind_user(self, token):
             return
-        if not await room_service.is_member(self.room_id, self.user.id):
+        if not await room_service.is_member(
+            cmds.IsRoomMemberQuery(room_id=self.room_id, user_id=self.user.id),
+        ):
             logger.warning(
                 "User %s is not a member of room %s",
                 self.user.username,
@@ -137,9 +139,11 @@ class ChatConsumer(AsyncWebsocketConsumer):
             await self.send(text_data=json.dumps({"error": "content_too_long"}))
             return
         message = await message_service.create_message(
-            sender_id=self.user.id,
-            room_id=self.room_id,
-            message_content=content,
+            cmds.CreateMessageCmd(
+                sender_id=self.user.id,
+                room_id=self.room_id,
+                content=content,
+            ),
         )
         await self.channel_layer.group_send(
             self.group_name,

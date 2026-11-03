@@ -16,17 +16,29 @@ making changes. Do not invent APIs — check the installed packages first.
 api/
 ├── common/       # ErrorModel mapping (DomainErrorMixin), pagination, shared schemas
 ├── config/       # split_settings: base, security, cache, storage, taskiq, ...
-├── user/         # models, schema.py (Pydantic), services/, api.py (controllers),
-│                 # consumers.py (WS chat), views.py (server-rendered chat), forms.py
+├── user/         # models, schema.py (Pydantic, boundary only), mappers.py,
+│                 # services/ (cmds.py + domain services), api.py (controllers),
+│                 # consumers.py (WS chat)
 bot/              # aiogram Telegram bot (config + handlers routers)
 tasks/            # taskiq broker & helpers
 tests/            # unit/, integration/, load/
 ```
 
-- **Service layer** owns business logic; controllers/consumers stay thin.
-  Services accept Pydantic DTOs, return domain types (`User | None`),
-  never HTTP statuses. Errors are raised as `DomainError` subclasses from
-  `api/common/exceptions.py` and mapped by `DomainErrorMixin`.
+- **Pydantic lives at the boundary only.** `schema.py` = request/response
+  models used by controllers; `services/cmds.py` = frozen dataclass
+  commands/queries passed into services; `mappers.py` = the only place
+  where schemas and commands meet.
+- **Service layer** owns business logic; controllers/consumers stay thin:
+  `validate → map schema → Cmd → service → map domain → schema`.
+  Services accept only `@dataclass(frozen=True, slots=True, kw_only=True)`
+  Cmd/Query objects (never Pydantic models, raw dicts or `**kwargs` bags),
+  return domain objects (`User | None`, `ChatRoom`, `QuerySet[Message]`,
+  `bool` for predicates) and never HTTP statuses. Errors are raised as
+  `DomainError` subclasses from `api/common/exceptions.py` and mapped by
+  `DomainErrorMixin`.
+- **Partial updates** use the `UNSET` sentinel in
+  `api/user/services/cmds.py`: a field left at `UNSET` is not touched,
+  an explicit `None` clears it.
 - **Async ORM only** in async code: `aget`, `acreate`, `asave`, `[obj async for ...]`.
 - **Transactions**: single writes need no transaction. Multi-step writes use
   `@sync_to_async` + `@transaction.atomic` bridge (see `room_service.py`,

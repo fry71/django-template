@@ -10,12 +10,17 @@ from django.contrib.auth.password_validation import validate_password
 from django.core.exceptions import ValidationError as DjangoValidationError
 
 from api.common.exceptions import ConflictError, ValidationError
+from api.user.services.cmds import (
+    AuthenticateUserCmd,
+    CreateUserCmd,
+    DeleteUserCmd,
+    GetUserCmd,
+    UpdateUserCmd,
+)
 from api.user.tasks import send_welcome_email
 
 if TYPE_CHECKING:
     from django.db.models import QuerySet
-
-    from api.user.schema import UserCreateIn, UserUpdateIn
 
 logger = logging.getLogger(__name__)
 
@@ -24,10 +29,10 @@ User = get_user_model()
 _EMAIL_PATTERN = re.compile(r"^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$")
 
 
-async def get_user(user_id: int) -> User | None:
+async def get_user(cmd: GetUserCmd) -> User | None:
     """Return user by id or None."""
     try:
-        return await User.objects.aget(id=user_id)
+        return await User.objects.aget(id=cmd.user_id)
     except User.DoesNotExist:
         return None
 
@@ -51,27 +56,27 @@ async def _validate_unique_email(user_id: int | None, email: str) -> None:
         raise ConflictError(msg, fields={"email": [msg]})
 
 
-async def create_user(payload: UserCreateIn) -> User:
+async def create_user(cmd: CreateUserCmd) -> User:
     """Create a user.
 
     Simple write (single INSERT) — use acreate() without a transaction bridge.
     Background tasks (e.g. welcome email) are dispatched via kiq AFTER commit.
     """
-    await _validate_unique_email(None, payload.email)
+    await _validate_unique_email(None, cmd.email)
 
     try:
-        validate_password(payload.password)
+        validate_password(cmd.password)
     except DjangoValidationError as exc:
         messages = list(exc.messages)
         raise ValidationError("; ".join(messages), fields={"password": messages}) from exc
 
     user = await User.objects.acreate_user(
-        username=payload.username,
-        email=payload.email,
-        password=payload.password,
-        first_name=payload.first_name,
-        last_name=payload.last_name,
-        patronymic=payload.patronymic,
+        username=cmd.username,
+        email=cmd.email,
+        password=cmd.password,
+        first_name=cmd.first_name,
+        last_name=cmd.last_name,
+        patronymic=cmd.patronymic,
     )
     logger.info("User created: %s", user.username)
 
@@ -83,40 +88,40 @@ async def create_user(payload: UserCreateIn) -> User:
     return user
 
 
-async def update_user(user_id: int, payload: UserUpdateIn) -> User | None:
+async def update_user(cmd: UpdateUserCmd) -> User | None:
     """Update a user.
 
     Single-model read-modify-write — simple write via asave().
     Returns None if the user is not found.
     """
-    user = await get_user(user_id)
+    user = await get_user(GetUserCmd(user_id=cmd.user_id))
     if user is None:
         return None
 
-    update_data = payload.model_dump(exclude_unset=True)
+    changes = cmd.provided()
 
-    email = update_data.get("email")
-    if email:
-        await _validate_unique_email(user_id, email)
+    email = changes.get("email")
+    if isinstance(email, str) and email:
+        await _validate_unique_email(cmd.user_id, email)
 
-    for key, field_value in update_data.items():
-        setattr(user, key, field_value)
+    for field_name, field_value in changes.items():
+        setattr(user, field_name, field_value)
     await user.asave()
     logger.info("User updated: %s", user.username)
     return user
 
 
-async def delete_user(user_id: int) -> bool:
+async def delete_user(cmd: DeleteUserCmd) -> bool:
     """Delete a user. Returns True/False."""
-    user = await get_user(user_id)
+    user = await get_user(GetUserCmd(user_id=cmd.user_id))
     if user is None:
         return False
 
     await user.adelete()
-    logger.info("User deleted: %s", user_id)
+    logger.info("User deleted: %s", cmd.user_id)
     return True
 
 
-async def authenticate(username: str, password: str) -> User | None:
+async def authenticate(cmd: AuthenticateUserCmd) -> User | None:
     """Authenticate a user."""
-    return await aauthenticate(username=username, password=password)
+    return await aauthenticate(username=cmd.username, password=cmd.password)

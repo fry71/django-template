@@ -16,7 +16,7 @@ django.setup()
 
 import pytest
 from django.contrib.auth import get_user_model
-from django.test import AsyncClient
+from dmr.test import DMRAsyncClient
 
 User = get_user_model()
 
@@ -56,9 +56,9 @@ def test_user(user_data) -> User:
 
 
 @pytest.fixture
-def async_client() -> AsyncClient:
-    """Async client for API tests."""
-    return AsyncClient()
+def async_client() -> DMRAsyncClient:
+    """Async DMR client for API tests (JSON content type by default)."""
+    return DMRAsyncClient()
 
 
 @pytest.fixture(autouse=True)

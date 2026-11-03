@@ -9,11 +9,18 @@ from django.db import IntegrityError, transaction
 
 from api.common.exceptions import ConflictError, PermissionDeniedError
 from api.user.models import ChatRoom, RoomMembership, RoomType, direct_room_key
+from api.user.services.cmds import (
+    CreateRoomCmd,
+    EnsureDirectRoomCmd,
+    GetRoomCmd,
+    IsRoomMemberQuery,
+    JoinRoomCmd,
+    LeaveRoomCmd,
+    ListRoomsQuery,
+)
 
 if TYPE_CHECKING:
     from django.db.models import QuerySet
-
-    from api.user.schema import RoomCreateIn
 
 logger = logging.getLogger(__name__)
 
@@ -23,24 +30,29 @@ def room_queryset() -> QuerySet[ChatRoom]:
     return ChatRoom.objects.prefetch_related("members").select_related("created_by")
 
 
-async def get_room(room_id: int) -> ChatRoom | None:
+def rooms_for_user(cmd: ListRoomsQuery) -> QuerySet[ChatRoom]:
+    """Return the rooms the user belongs to."""
+    return room_queryset().filter(members__id=cmd.user_id)
+
+
+async def get_room(cmd: GetRoomCmd) -> ChatRoom | None:
     """Return room by id or None."""
     try:
-        return await room_queryset().aget(id=room_id)
+        return await room_queryset().aget(id=cmd.room_id)
     except ChatRoom.DoesNotExist:
         return None
 
 
-async def create_room(user_id: int, payload: RoomCreateIn) -> ChatRoom:
+async def create_room(cmd: CreateRoomCmd) -> ChatRoom:
     """Create a group room and add the creator as its first member.
 
     Multi-step write (room + membership) — atomic bridge.
     """
     try:
         return await _create_room_with_member(
-            name=payload.name,
-            is_private=payload.is_private,
-            creator_id=user_id,
+            name=cmd.name,
+            is_private=cmd.is_private,
+            creator_id=cmd.creator_id,
         )
     except IntegrityError as exc:
         msg = "Room creation conflict"
@@ -66,16 +78,20 @@ def _create_room_with_member(
     return room
 
 
-async def get_or_create_direct_room(user_a_id: int, user_b_id: int) -> ChatRoom:
+async def get_or_create_direct_room(cmd: EnsureDirectRoomCmd) -> ChatRoom:
     """Return the existing 1:1 room between two users or create it.
 
     Multi-step write (room + two memberships) — atomic bridge.
     """
-    key = direct_room_key(user_a_id, user_b_id)
+    key = direct_room_key(cmd.user_a_id, cmd.user_b_id)
     existing = await room_queryset().filter(direct_key=key).afirst()
     if existing is not None:
         return existing
-    return await _create_direct_room(key=key, user_a_id=user_a_id, user_b_id=user_b_id)
+    return await _create_direct_room(
+        key=key,
+        user_a_id=cmd.user_a_id,
+        user_b_id=cmd.user_b_id,
+    )
 
 
 @sync_to_async
@@ -98,34 +114,34 @@ def _create_direct_room(key: str, user_a_id: int, user_b_id: int) -> ChatRoom:
     return room
 
 
-async def join_room(room_id: int, user_id: int) -> bool:
+async def join_room(cmd: JoinRoomCmd) -> bool:
     """Add a user to a public room. Returns False if the room is missing."""
-    room = await get_room(room_id)
+    room = await get_room(GetRoomCmd(room_id=cmd.room_id))
     if room is None:
         return False
     if room.is_private:
         msg = "Cannot join a private room"
         raise PermissionDeniedError(msg)
-    await RoomMembership.objects.aget_or_create(room_id=room.id, user_id=user_id)
-    logger.info("User %s joined room %s", user_id, room.id)
+    await RoomMembership.objects.aget_or_create(room_id=room.id, user_id=cmd.user_id)
+    logger.info("User %s joined room %s", cmd.user_id, room.id)
     return True
 
 
-async def leave_room(room_id: int, user_id: int) -> bool:
+async def leave_room(cmd: LeaveRoomCmd) -> bool:
     """Remove a user from a room. Returns False if the room is missing."""
-    exists = await ChatRoom.objects.filter(id=room_id).aexists()
+    exists = await ChatRoom.objects.filter(id=cmd.room_id).aexists()
     if not exists:
         return False
     deleted, _ = await RoomMembership.objects.filter(
-        room_id=room_id,
-        user_id=user_id,
+        room_id=cmd.room_id,
+        user_id=cmd.user_id,
     ).adelete()
     return deleted > 0
 
 
-async def is_member(room_id: int, user_id: int) -> bool:
+async def is_member(cmd: IsRoomMemberQuery) -> bool:
     """Return whether the user belongs to the room."""
     return await RoomMembership.objects.filter(
-        room_id=room_id,
-        user_id=user_id,
+        room_id=cmd.room_id,
+        user_id=cmd.user_id,
     ).aexists()

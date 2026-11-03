@@ -1,10 +1,18 @@
 # tests/integration/test_user_api.py
 from __future__ import annotations
 
+from typing import TYPE_CHECKING
+
 import pytest
 from django.contrib.auth import get_user_model
+from django.core.files.uploadedfile import SimpleUploadedFile
+from django.test.client import BOUNDARY, MULTIPART_CONTENT, encode_multipart
 
+from api.user.limits import MAX_PHOTO_SIZE_BYTES
 from api.user.models import Message
+
+if TYPE_CHECKING:
+    from django.http import HttpResponse
 
 User = get_user_model()
 
@@ -165,6 +173,36 @@ class TestUserApi:
         )
         assert resp.status_code == 200
         assert resp.json()["first_name"] == "UpdatedName"
+
+    async def test_update_user_explicit_null_rejected(
+        self, async_client, user_data: dict[str, str]
+    ) -> None:
+        await _register_user(async_client, user_data)
+        token = await _get_token(
+            async_client,
+            user_data["username"],
+            user_data["password"],
+        )
+        me = await async_client.get(
+            "/api/user/me",
+            headers={"Authorization": f"Bearer {token}"},
+        )
+        user_id = me.json()["id"]
+
+        resp = await async_client.put(
+            f"/api/user/users/{user_id}",
+            data={"first_name": None},
+            content_type="application/json",
+            headers={"Authorization": f"Bearer {token}"},
+        )
+        assert resp.status_code == 400
+        assert resp.json()["detail"][0]["loc"][-1] == "first_name"
+
+        still_there = await async_client.get(
+            "/api/user/me",
+            headers={"Authorization": f"Bearer {token}"},
+        )
+        assert still_there.json()["first_name"] == user_data["first_name"]
 
     async def test_update_user_duplicate_email(
         self, async_client, user_data: dict[str, str], user_data2
@@ -429,3 +467,88 @@ class TestUserApi:
     async def test_me_requires_auth(self, async_client) -> None:
         resp = await async_client.get("/api/user/me")
         assert resp.status_code == 401
+
+
+@pytest.mark.django_db(transaction=True)
+class TestPhotoApi:
+    async def _token(self, async_client, user_data: dict[str, str]) -> str:
+        await _register_user(async_client, user_data)
+        return await _get_token(
+            async_client,
+            user_data["username"],
+            user_data["password"],
+        )
+
+    async def _upload(
+        self,
+        async_client,
+        token: str,
+        files: dict[str, object],
+    ) -> HttpResponse:
+        return await async_client.post(
+            "/api/user/photos",
+            data=encode_multipart(BOUNDARY, files),
+            headers={
+                "Authorization": f"Bearer {token}",
+                "Content-Type": MULTIPART_CONTENT,
+            },
+        )
+
+    async def test_upload_photo_success(
+        self, async_client, user_data: dict[str, str]
+    ) -> None:
+        token = await self._token(async_client, user_data)
+        image = SimpleUploadedFile(
+            "photo.png",
+            b"\x89PNG\r\n\x1a\nfake-image",
+            content_type="image/png",
+        )
+
+        resp = await self._upload(async_client, token, {"image": image})
+
+        assert resp.status_code == 201, resp.json()
+        assert resp.json()["image"].endswith(".png")
+
+    async def test_upload_photo_rejects_non_image(
+        self, async_client, user_data: dict[str, str]
+    ) -> None:
+        token = await self._token(async_client, user_data)
+        notes = SimpleUploadedFile("notes.txt", b"just text", content_type="text/plain")
+
+        resp = await self._upload(async_client, token, {"image": notes})
+
+        assert resp.status_code == 400, resp.json()
+        assert resp.json()["detail"][0]["loc"] == [
+            "parsed_file_metadata",
+            "image",
+            "content_type",
+        ]
+
+    async def test_upload_photo_rejects_oversized(
+        self, async_client, user_data: dict[str, str]
+    ) -> None:
+        token = await self._token(async_client, user_data)
+        oversized = SimpleUploadedFile(
+            "big.png",
+            b"\0" * (MAX_PHOTO_SIZE_BYTES + 1),
+            content_type="image/png",
+        )
+
+        resp = await self._upload(async_client, token, {"image": oversized})
+
+        assert resp.status_code == 400, resp.json()
+        assert resp.json()["detail"][0]["loc"] == [
+            "parsed_file_metadata",
+            "image",
+            "size",
+        ]
+
+    async def test_upload_photo_requires_file(
+        self, async_client, user_data: dict[str, str]
+    ) -> None:
+        token = await self._token(async_client, user_data)
+
+        resp = await self._upload(async_client, token, {})
+
+        assert resp.status_code == 400, resp.json()
+        assert resp.json()["detail"][0]["loc"][-1] == "image"
