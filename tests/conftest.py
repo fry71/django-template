@@ -16,7 +16,6 @@ django.setup()
 
 import pytest
 from django.contrib.auth import get_user_model
-from dmr.test import DMRAsyncClient
 
 User = get_user_model()
 
@@ -55,12 +54,6 @@ def test_user(user_data) -> User:
     user.delete()
 
 
-@pytest.fixture
-def async_client() -> DMRAsyncClient:
-    """Async DMR client for API tests (JSON content type by default)."""
-    return DMRAsyncClient()
-
-
 @pytest.fixture(autouse=True)
 def mock_taskiq_tasks(monkeypatch) -> None:
     """Tasks are queued but not executed.
@@ -89,3 +82,30 @@ def _clear_throttle_cache() -> None:
     from django.core.cache import cache
 
     cache.clear()
+
+
+@pytest.fixture(scope="session")
+def tracecov_map():  # type: ignore[no-any-return]
+    """Session TraceCov map; ``None`` keeps the default run untracked.
+
+    Opt-in contract coverage — which OpenAPI operations and parameters
+    the tests actually exercised:
+
+        TRACECOV=1 uv run pytest tests
+
+    The dmr pytest plugin wires every ``dmr_client``/``dmr_async_client``
+    request into this map automatically. Caveat: the tracecov Django
+    client wrapper reads ``request.body``, which Django forbids for
+    multipart once the stream is parsed, so a tracked run must skip
+    the upload tests (``-k "not TestPhotoApi"``) until tracecov fixes it.
+    """
+    if not os.environ.get("TRACECOV"):
+        return None
+    try:
+        import tracecov
+    except ImportError:  # pragma: no cover
+        return None
+
+    from api.web.routing import schema
+
+    return tracecov.CoverageMap.from_dict(schema.convert())

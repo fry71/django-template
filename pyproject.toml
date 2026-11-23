@@ -96,6 +96,7 @@ dev = [
     "mkdocs-material>=9.5.0",
     "types-aiofiles>=25.1.0.20260518",
     "wemake-python-styleguide",
+    "tracecov>=0.26.1",
 ]
 
 [tool.uv.sources]
@@ -116,6 +117,7 @@ omit = [
 
 [tool.black]
 line-length = 90
+target-version = ["py314"]
 
 [tool.mypy]
 plugins = ["mypy_django_plugin.main"]

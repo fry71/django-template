@@ -1,12 +1,10 @@
 # api/user/api.py
 from __future__ import annotations
 
-import logging
 from datetime import UTC, datetime, timedelta
 from http import HTTPStatus
 from typing import TYPE_CHECKING, TypedDict, cast
 
-import jwt
 from django.conf import settings
 from django.db import IntegrityError
 from dmr import modify
@@ -17,10 +15,11 @@ from dmr.components import (  # DMR resolves these at runtime
     Query,
 )
 from dmr.exceptions import NotAuthenticatedError
+from dmr.pagination import CursorPaginated, CursorPaginator
 from dmr.parsers import MultiPartParser
-from dmr.plugins.pydantic import PydanticSerializer
+from dmr.plugins.pydantic import PydanticFastSerializer, PydanticSerializer
 from dmr.security.base import NO_STORE_HEADERS
-from dmr.security.jwt import JWTAsyncAuth
+from dmr.security.jwt import HeaderJWTAsyncAuth
 from dmr.security.jwt.views import (
     ObtainTokensAsyncController,
     ObtainTokensPayload,
@@ -33,7 +32,6 @@ from dmr.throttling import AsyncThrottle
 from api.common import lockout
 from api.common.controllers import (
     AUTHENTICATION_REQUIRED,
-    ERROR_RESPONSES,
     BaseAsyncController,
     DomainErrorMixin,
 )
@@ -58,12 +56,13 @@ from api.user.services import (
 
 if TYPE_CHECKING:
     from django.core.files.uploadedfile import UploadedFile
+    from dmr import Controller
 
-logger = logging.getLogger(__name__)
-
-# RFC 9110 (15.5.2) requires a challenge on every 401. dmr adds it for its own
-# auth, but the token endpoints authenticate with a body, so the challenge and
-# the matching response spec (``AUTHENTICATION_REQUIRED``) are supplied here.
+# RFC 9110 (15.5.2) requires a challenge on every 401. dmr adds it on its own
+# for every endpoint with an auth chain (``add_www_authenticate`` in
+# ``global_error_handler``); the token endpoints below authenticate with a
+# body and have no auth chain, so they supply the challenge manually and
+# declare it in their response specs (``AUTHENTICATION_REQUIRED``).
 
 
 def _auth_challenge() -> dict[str, str]:
@@ -91,9 +90,10 @@ def _access_lifetime_minutes() -> int:
     return settings.JWT_ACCESS_TOKEN_LIFETIME
 
 
-# JWTAsyncAuth binds settings at import time; api.user.api must therefore be
-# imported only after Django has configured the app registry (see api.web.asgi).
-JWT_AUTH = JWTAsyncAuth(
+# HeaderJWTAsyncAuth binds settings at import time; api.user.api must
+# therefore be imported only after Django has configured the app registry
+# (see api.web.asgi).
+JWT_AUTH = HeaderJWTAsyncAuth(
     secret=settings.JWT_SECRET_KEY,
     algorithm=settings.JWT_ALGORITHM,
 )
@@ -120,7 +120,7 @@ class _RoomIdPath(TypedDict):
 class ObtainAccessAndRefreshController(
     DomainErrorMixin,
     ObtainTokensAsyncController[
-        PydanticSerializer,
+        PydanticFastSerializer,
         ObtainTokensPayload,
         ObtainTokensResponse,
     ],
@@ -166,8 +166,10 @@ class ObtainAccessAndRefreshController(
             response = await super().login(parsed_body)
         except NotAuthenticatedError as exc:
             await lockout.register_failure(username)
-            # dmr's login flow builds a bare 401; add the RFC 9110 challenge.
-            exc.headers = _auth_challenge()
+            # dmr's login flow builds a bare 401; add the RFC 9110 challenge
+            # without dropping any headers dmr may have set itself.
+            if exc.headers is None:
+                exc.headers = _auth_challenge()
             raise
         await lockout.reset(username)
         return response
@@ -190,7 +192,7 @@ class ObtainAccessAndRefreshController(
 class RefreshAccessAndRefreshController(
     DomainErrorMixin,
     RefreshTokenAsyncController[
-        PydanticSerializer,
+        PydanticFastSerializer,
         RefreshTokenPayload,
         ObtainTokensResponse,
     ],
@@ -199,10 +201,14 @@ class RefreshAccessAndRefreshController(
 
     Implements rotation: the presented refresh token's jti is denylisted
     before the new pair is issued, so each refresh token works only once.
+
+    The contract is exactly what this endpoint can answer — 200, 400 for
+    a malformed body, 401 with the RFC 9110 challenge, and the semantic
+    406/422/429 — unlike ``ERROR_RESPONSES`` of the domain controllers,
+    which is why ``responses`` is not overridden here.
     """
 
     jwt_secret = settings.JWT_SECRET_KEY
-    responses = ERROR_RESPONSES
 
     @classmethod
     def modify_spec(cls) -> object:
@@ -218,27 +224,30 @@ class RefreshAccessAndRefreshController(
     async def convert_refresh_payload(self, payload: RefreshTokenPayload) -> str:
         """Validate the token's claims and burn its jti (rotation).
 
-        The unique ``jti`` column is the single point of truth: two
-        concurrent refreshes of the same token race on this INSERT and
-        exactly one of them wins. Signature, type, expiry, and user
-        existence are validated by the parent ``refresh()`` flow afterwards.
+        ``JWT_AUTH.decode_token`` turns any bad token — bad signature,
+        expired, malformed — into the same ``NotAuthenticatedError`` the
+        parent ``refresh()`` flow raises, so no pyjwt error ever escapes
+        as a 500. The unique ``jti`` column is the single point of truth:
+        two concurrent refreshes of the same token race on this INSERT
+        and exactly one of them wins. Token type and user existence are
+        validated by the parent flow afterwards.
         """
         raw_token = payload["refresh_token"]
-        claims = jwt.decode(
-            raw_token,
-            # Same fallback dmr itself uses for its token controllers.
-            self.jwt_secret or settings.SECRET_KEY,
-            algorithms=[settings.JWT_ALGORITHM],
-        )
-        token_jti = claims.get("jti")
-        expires_at = claims.get("exp")
-        if not token_jti or not expires_at:
-            msg = "Refresh token has no jti or exp claim"
+        try:
+            token = JWT_AUTH.decode_token(raw_token)
+        except NotAuthenticatedError as exc:
+            # The endpoint has no auth chain, so the RFC 9110 challenge
+            # is not added automatically here.
+            if exc.headers is None:
+                exc.headers = _auth_challenge()
+            raise
+        if not token.jti:
+            msg = "Refresh token has no jti claim"
             raise NotAuthenticatedError(msg, headers=_auth_challenge())
         try:
             await UsedRefreshToken.objects.acreate(
-                jti=token_jti,
-                expires_at=datetime.fromtimestamp(expires_at, tz=UTC),
+                jti=token.jti,
+                expires_at=token.exp,
             )
         except IntegrityError as exc:
             msg = "Refresh token already used"
@@ -260,16 +269,20 @@ class RefreshAccessAndRefreshController(
         }
 
 
-def _current_user(controller: BaseAsyncController) -> UserModel:
-    """Return the authenticated user, narrowing the request user type."""
+def _current_user(controller: Controller[PydanticSerializer]) -> UserModel:
+    """Return the authenticated user, narrowing the request user type.
+
+    dmr's error handler adds the ``WWW-Authenticate`` challenge itself:
+    every endpoint calling this has a JWT auth in its chain.
+    """
     user = controller.request.user
     if not isinstance(user, UserModel):
         msg = "Expected an authenticated user"
-        raise NotAuthenticatedError(msg, headers=_auth_challenge())
+        raise NotAuthenticatedError(msg)
     return user
 
 
-def _current_user_id(controller: BaseAsyncController) -> int:
+def _current_user_id(controller: Controller[PydanticSerializer]) -> int:
     """Return the authenticated user's id."""
     return _current_user(controller).pk
 
@@ -372,21 +385,27 @@ class MessageListController(BaseAsyncController):
 
     async def get(
         self,
-        parsed_query: Query[schema.MessagePageQuery],
-    ) -> schema.MessagesPage:
-        """Paginated message list with optional search."""
-        records, info = await paginate(
-            message_service.message_queryset(mappers.list_messages_query(parsed_query)),
-            parsed_query.page,
-            parsed_query.page_size,
+        parsed_query: Query[schema.MessageCursorQuery],
+    ) -> CursorPaginated[schema.MessageOut]:
+        """Cursor-paginated message list with optional search.
+
+        The feed keeps receiving new rows, so page numbers would skip
+        or duplicate messages between requests; the cursor is the
+        position of the last seen row instead. It is bound to the
+        ordering and filters it was created with — do not change
+        ``sort``/``room_id``/``search`` while following one.
+        """
+        paginator = CursorPaginator(
+            message_service.message_queryset(
+                mappers.list_messages_query(parsed_query),
+            ),
+            per_page=parsed_query.limit,
         )
-        messages = [mappers.message_out(message) for message in records]
-        return build_page(
-            schema.MessagesPage,
-            messages,
-            info,
-            parsed_query.page,
-            parsed_query.page_size,
+        page = await paginator.apage(parsed_query.cursor)
+        return CursorPaginated(
+            next_cursor=page.next_cursor,
+            per_page=paginator.per_page,
+            page=[mappers.message_out(message) for message in page.objects_list],
         )
 
     @modify(status_code=HTTPStatus.CREATED)
@@ -524,8 +543,12 @@ class RoomMembershipController(BaseAsyncController):
             raise NotFoundError(msg)
 
 
-class PhotoListController(BaseAsyncController):
-    """List the current user's photos or upload a new one."""
+class PhotoListController(BaseAsyncController[PydanticSerializer]):
+    """List the current user's photos or upload a new one.
+
+    ``PydanticSerializer`` instead of the ``PydanticFastSerializer``
+    default: this controller parses ``multipart/form-data``.
+    """
 
     auth = (JWT_AUTH,)
     parsers = (MultiPartParser(),)

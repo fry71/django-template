@@ -7,7 +7,7 @@ on:
 
 jobs:
   lint:
-    name: Lint (ruff + WPS + black + ty)
+    name: Lint (ruff + WPS + black + ty + OpenAPI drift)
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
@@ -32,6 +32,11 @@ jobs:
 
       - name: Typecheck with ty
         run: uv run ty check api tasks main.py manage.py
+
+      - name: Check OpenAPI schema drift
+        run: |
+          uv run python manage.py dmr_export_schema api.web.routing.schema > openapi.json
+          git diff --exit-code openapi.json
 
   test:
     name: Tests (pytest, sqlite)

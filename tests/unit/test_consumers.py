@@ -61,7 +61,13 @@ async def _make_room(user, *, member: bool = True) -> ChatRoom:
     return room
 
 
-async def _make_valid_token(user) -> str:
+async def _make_valid_token(user, *, token_type: str) -> str:
+    """Encode a token in the exact claim format dmr issues.
+
+    dmr puts the user id into ``sub`` and the token type into
+    ``extras.type``; tests must not invent their own claim names,
+    or they keep passing while real tokens fail.
+    """
     from datetime import datetime, timedelta
 
     import jwt as pyjwt
@@ -69,8 +75,9 @@ async def _make_valid_token(user) -> str:
 
     now = datetime.now(UTC)
     payload = {
-        "user_id": user.id,
-        "token_type": "access",
+        "sub": str(user.id),
+        "jti": f"test-{token_type}-{user.id}",
+        "extras": {"type": token_type},
         "exp": int((now + timedelta(minutes=5)).timestamp()),
         "iat": int(now.timestamp()),
     }
@@ -95,7 +102,9 @@ class TestChatConsumerConnect:
         consumer.accept = fake_accept  # type: ignore[method-assign]
         consumer.close = fake_close  # type: ignore[method-assign]
 
-        await _connect_and_auth(consumer, await _make_valid_token(test_user))
+        await _connect_and_auth(
+            consumer, await _make_valid_token(test_user, token_type="access")
+        )
 
         assert accepted == [True]
         assert consumer.user.id == test_user.id
@@ -118,7 +127,9 @@ class TestChatConsumerConnect:
         consumer.accept = fake_accept  # type: ignore[method-assign]
         consumer.close = fake_close  # type: ignore[method-assign]
 
-        await _connect_and_auth(consumer, await _make_valid_token(test_user))
+        await _connect_and_auth(
+            consumer, await _make_valid_token(test_user, token_type="access")
+        )
 
         assert closed == [True]
 
@@ -177,22 +188,8 @@ class TestChatConsumerConnect:
         assert closed == [True]
 
     async def test_connect_refresh_token_rejected(self, test_user) -> None:
-        from datetime import datetime, timedelta
-
-        import jwt as pyjwt
-        from django.conf import settings
-
         await _make_room(test_user)
-        now = datetime.now(UTC)
-        payload = {
-            "user_id": test_user.id,
-            "token_type": "refresh",
-            "exp": int((now + timedelta(minutes=5)).timestamp()),
-            "iat": int(now.timestamp()),
-        }
-        token = pyjwt.encode(
-            payload, settings.JWT_SECRET_KEY, algorithm=settings.JWT_ALGORITHM
-        )
+        token = await _make_valid_token(test_user, token_type="refresh")
 
         consumer = await _make_consumer()
         closed: list[bool] = []
@@ -211,22 +208,42 @@ class TestChatConsumerConnect:
         assert closed == [True]
 
     async def test_connect_user_not_found(self, test_user) -> None:
-        from datetime import datetime, timedelta
-
-        import jwt as pyjwt
-        from django.conf import settings
-
         await _make_room(test_user)
-        now = datetime.now(UTC)
-        payload = {
-            "user_id": 999_999,
-            "token_type": "access",
-            "exp": int((now + timedelta(minutes=5)).timestamp()),
-            "iat": int(now.timestamp()),
-        }
-        token = pyjwt.encode(
-            payload, settings.JWT_SECRET_KEY, algorithm=settings.JWT_ALGORITHM
-        )
+
+        class _Ghost:
+            id = 999_999
+
+        token = await _make_valid_token(_Ghost(), token_type="access")
+
+        consumer = await _make_consumer()
+        closed: list[bool] = []
+
+        async def fake_close() -> None:
+            closed.append(True)
+
+        async def fake_accept() -> None:
+            return None
+
+        consumer.accept = fake_accept  # type: ignore[method-assign]
+        consumer.close = fake_close  # type: ignore[method-assign]
+
+        await _connect_and_auth(consumer, token)
+
+        assert closed == [True]
+
+    async def test_connect_bogus_subject_rejected(self, test_user) -> None:
+        """A signed token whose ``sub`` cannot be a pk closes the socket.
+
+        An int pk lookup with a non-numeric ``sub`` raises ``ValueError``:
+        it must be handled like any other unknown user, not crash
+        the consumer with an unhandled error.
+        """
+        await _make_room(test_user)
+
+        class _Bogus:
+            id = "abc"
+
+        token = await _make_valid_token(_Bogus(), token_type="access")
 
         consumer = await _make_consumer()
         closed: list[bool] = []
@@ -250,7 +267,9 @@ class TestChatConsumerDisconnect:
     async def test_disconnect_cleans_group(self, test_user) -> None:
         room = await _make_room(test_user)
         consumer = await _make_consumer(room.id)
-        await _connect_and_auth(consumer, await _make_valid_token(test_user))
+        await _connect_and_auth(
+            consumer, await _make_valid_token(test_user, token_type="access")
+        )
 
         await consumer.disconnect(1000)
 
@@ -267,7 +286,9 @@ class TestChatConsumerReceive:
     async def test_receive_valid_message(self, test_user) -> None:
         room = await _make_room(test_user)
         consumer = await _make_consumer(room.id)
-        await _connect_and_auth(consumer, await _make_valid_token(test_user))
+        await _connect_and_auth(
+            consumer, await _make_valid_token(test_user, token_type="access")
+        )
 
         await consumer.receive(json.dumps({"content": "hello chat"}))
 
@@ -284,7 +305,9 @@ class TestChatConsumerReceive:
     async def test_receive_empty_content(self, test_user) -> None:
         room = await _make_room(test_user)
         consumer = await _make_consumer(room.id)
-        await _connect_and_auth(consumer, await _make_valid_token(test_user))
+        await _connect_and_auth(
+            consumer, await _make_valid_token(test_user, token_type="access")
+        )
 
         await consumer.receive(json.dumps({"content": ""}))
         assert consumer.channel_layer.sent == []
@@ -292,7 +315,9 @@ class TestChatConsumerReceive:
     async def test_receive_invalid_json(self, test_user) -> None:
         room = await _make_room(test_user)
         consumer = await _make_consumer(room.id)
-        await _connect_and_auth(consumer, await _make_valid_token(test_user))
+        await _connect_and_auth(
+            consumer, await _make_valid_token(test_user, token_type="access")
+        )
 
         await consumer.receive("not json {")
         assert consumer.channel_layer.sent == []

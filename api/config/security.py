@@ -27,7 +27,6 @@ if _default_jwt_secret_key == JWT_SECRET_KEY:
 # JWT settings — required for production
 JWT_ALGORITHM = "HS256"
 JWT_ACCESS_TOKEN_LIFETIME = 5  # minutes
-JWT_HEADER_PREFIX = "JWT"
 
 # SECURITY WARNING: don't run with debug turned on in production!
 DEBUG = getenv("DJANGO_DEBUG", "false").lower() == "true"

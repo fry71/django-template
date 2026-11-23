@@ -38,7 +38,7 @@ def create_room_cmd(payload: schema.RoomCreateIn, creator_id: int) -> cmds.Creat
     )
 
 
-def list_messages_query(payload: schema.MessagePageQuery) -> cmds.ListMessagesQuery:
+def list_messages_query(payload: schema.MessageCursorQuery) -> cmds.ListMessagesQuery:
     """Map message list filters to the service query."""
     return cmds.ListMessagesQuery(
         room_id=payload.room_id,

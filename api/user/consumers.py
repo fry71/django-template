@@ -7,9 +7,11 @@ import json
 import logging
 import time
 
-import jwt
 from channels.generic.websocket import AsyncWebsocketConsumer
 from django.conf import settings
+from dmr.exceptions import NotAuthenticatedError
+from dmr.security.jwt.auth.base import USER_LOOKUP_ERRORS
+from dmr.security.jwt.token import JWToken, JWTokenError
 
 from api.user.models import User
 from api.user.services import cmds, message_service, room_service
@@ -19,6 +21,15 @@ logger = logging.getLogger(__name__)
 MAX_CONTENT_LENGTH = 4000
 RATE_LIMIT_MESSAGES = 10
 RATE_LIMIT_WINDOW_SECONDS = 5.0
+
+# Everything that means "this token does not identify a user": dmr's
+# token-layer errors plus its own ``USER_LOOKUP_ERRORS`` set — a bogus
+# ``sub`` that cannot be a user pk is the same as no such user.
+_AUTH_FAILURES = (
+    JWTokenError,
+    NotAuthenticatedError,
+    *USER_LOOKUP_ERRORS,
+)
 
 
 class SlidingWindowRateLimiter:
@@ -163,7 +174,7 @@ async def _bind_user(consumer: ChatConsumer, token: str) -> bool:
     """Resolve JWT to ``consumer.user``. Return whether auth may continue."""
     try:
         consumer.user = await _user_from_access_token(token)
-    except jwt.InvalidTokenError, User.DoesNotExist, KeyError:
+    except _AUTH_FAILURES:
         logger.exception("WebSocket authentication failed")
         await consumer.close()
         return False
@@ -171,18 +182,22 @@ async def _bind_user(consumer: ChatConsumer, token: str) -> bool:
 
 
 async def _user_from_access_token(token: str) -> User:
-    """Resolve a user from a valid access JWT token."""
-    payload = jwt.decode(
+    """Resolve a user from a valid access JWT token.
+
+    ``JWToken.decode`` is the same validator the dmr auth classes use:
+    it raises ``NotAuthenticatedError`` for any broken or expired token,
+    so only the dmr-issued claim layout matters here — the user id lives
+    in ``sub`` and the token type in ``extras.type``.
+    """
+    decoded = JWToken.decode(
         token,
-        settings.JWT_SECRET_KEY,
-        algorithms=[settings.JWT_ALGORITHM],
+        secret=settings.JWT_SECRET_KEY or settings.SECRET_KEY,
+        algorithm=settings.JWT_ALGORITHM,
     )
-    extras = payload.get("extras", {})
-    token_type = extras.get("type") or payload.get("token_type")
-    if token_type != "access":
+    if decoded.extras.get("type") != "access":
         msg = "Refresh token used for WebSocket auth"
-        raise jwt.InvalidTokenError(msg)
-    return await User.objects.aget(id=payload["user_id"])
+        raise JWTokenError(msg)
+    return await User.objects.aget(id=decoded.sub)
 
 
 def _extract_auth_token(text_data: str) -> str | None:

@@ -48,7 +48,9 @@ tests/            # unit/, integration/, load/
 
 ## dmr (django-modern-rest) conventions
 
-Follow https://django-modern-rest.readthedocs.io/llms-full.txt. Key points:
+Follow https://django-modern-rest.readthedocs.io/en/0.17.0/llms.txt
+(docs are versioned; the old unversioned `llms-full.txt` was removed in 0.17).
+Key points:
 
 - Component parameter names are fixed: `parsed_body`, `parsed_query`,
   `parsed_path`, `parsed_headers`, `parsed_cookies`, `parsed_file_metadata`.
@@ -57,10 +59,18 @@ Follow https://django-modern-rest.readthedocs.io/llms-full.txt. Key points:
   via `BaseAsyncController.responses` / `ERROR_RESPONSES`.
 - Never return raw `HttpResponse` from endpoints — raise `DomainError`
   or use `to_response`/`to_error`.
-- Every `401` carries `WWW-Authenticate` (RFC 9110): dmr adds it for its own
-  auth, domain 401s raise `NotAuthenticatedError(headers=...)`, and the token
-  controllers override `modify_spec()` because dmr's JWT spec omits it.
+- `BaseAsyncController` defaults to `PydanticFastSerializer` (JSON-only,
+  the fastest pydantic option); controllers with non-JSON parsers (e.g.
+  multipart uploads) pass `BaseAsyncController[PydanticSerializer]`.
+- Every `401` carries `WWW-Authenticate` (RFC 9110): dmr's error handler
+  adds the challenge itself on every endpoint with an auth chain
+  (`add_www_authenticate` in `global_error_handler`). The token controllers
+  have no auth chain (they authenticate with a body), so they raise
+  `NotAuthenticatedError(headers=...)` manually and override `modify_spec()`
+  because dmr's JWT spec still omits the header.
 - Auth endpoints MUST be throttled (`throttling = (_AUTH_THROTTLE,)`).
+- Rate-limit headers are documented as integers
+  (`HeaderSpec(type=int, example=...)`), matching the dmr 0.17 convention.
 - Response validation stays ON in development and in tests (even with
   `DJANGO_DEBUG=false`) and OFF in production (`DMR_SETTINGS` in
   `api/config/security.py`). Because tests validate responses, every
@@ -72,10 +82,16 @@ Follow https://django-modern-rest.readthedocs.io/llms-full.txt. Key points:
 - `ChatRoom` (group | direct) + `RoomMembership` (M2M through) + `Message.room`.
 - Direct rooms are found via deterministic `direct_room_key(a_id, b_id)`.
 - **Golden path:** JWT REST + WebSocket `/ws/chat/<room_id>/`. First frame
-  `{"type": "auth", "token": "<access JWT>"}` (never path or query). Then
+  `{"type": "auth", "token": "<access JWT>"}` (never path or query); the server
+  answers `{"type": "auth_ok"}` on success and broadcasts to the group.
+  The token is a dmr-issued access JWT — verified with `JWToken.decode`, never
+  hand-rolled pyjwt: the user id lives in `sub`, the token type in
+  `extras.type == "access"`, and a `sub` that cannot be a user pk
+  (`USER_LOOKUP_ERRORS`) closes the socket like any unknown user. Then
   membership check; group `chat_<room_id>`; rate limit 10 msg / 5 s;
-  content ≤ 4000 chars.
-- `/chat/` SSE + session is an HTML demo of the same models, not a second API.
+  content ≤ 4000 chars. End-to-end coverage lives in
+  `tests/integration/test_ws_chat.py` (full ASGI stack, real REST-issued
+  token), unit coverage in `tests/unit/test_consumers.py`.
 
 ## Security rules
 
@@ -111,7 +127,7 @@ Follow https://django-modern-rest.readthedocs.io/llms-full.txt. Key points:
 ```bash
 uv run flake8 . --select=WPS         # wemake-python-styleguide (see .flake8 excludes)
 uv run ruff check .
-uv run black --check --target-version py314 api tasks tests main.py manage.py
+uv run black --check api tasks tests main.py manage.py   # target-version lives in pyproject
 uv run ty check api tasks main.py manage.py
 ```
 
@@ -119,7 +135,13 @@ Notes:
 - `flake8 --select=WPS` is **only** wemake-python-styleguide. pep8/bugbear/isort
   live in `ruff check` (`select = ["ALL"]`). The two tools do not duplicate
   pycodestyle.
+- The OpenAPI contract lives in `openapi.json` (committed). When the API
+  changes, regenerate and commit it:
+  `uv run python manage.py dmr_export_schema api.web.routing.schema > openapi.json`.
+  CI regenerates and diffs it, so a PR that changes the contract silently
+  fails. The export is byte-deterministic.
 - WPS exceptions policy lives in `.flake8` (tests, settings modules and
   bot excluded; magic numbers allowed for max_length/status codes).
-- Python 3.14 allows `except A, B:` without parentheses (PEP 758) but we
-  prefer explicit parentheses for clarity.
+- Python 3.14 allows `except A, B:` without parentheses (PEP 758), and
+  `black --target-version py314` enforces that form: it rewrites
+  `except (A, B):` to `except A, B:`. Don't fight the formatter.

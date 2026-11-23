@@ -37,3 +37,7 @@ ignore =
     WPS235,
     WPS432,
     WPS476
+# App controller hub: every imported name is used, the module is an
+# aggregator by design (same policy family as WPS201/WPS202 above).
+per-file-ignores =
+    api/user/api.py:WPS203

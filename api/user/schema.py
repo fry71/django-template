@@ -16,9 +16,8 @@ type RoomID = int
 
 
 def _field(description: str, **kwargs: Any) -> Any:
-    """Field with metadata via pydantic v2 json_schema_extra."""
-    kwargs["json_schema_extra"] = {"metadata": {"description": description}}
-    return Field(**kwargs)
+    """Field with a description kept by the dmr schema loader."""
+    return Field(description=description, **kwargs)
 
 
 class UserOutSchema(BaseModel):
@@ -149,9 +148,14 @@ class PageQuery(BaseModel):
     page_size: int = _field("Items per page", default=10, ge=1, le=100)
 
 
-class MessagePageQuery(PageQuery):
-    """Query parameters for the message list."""
+class MessageCursorQuery(BaseModel):
+    """Query parameters for the cursor-paginated message list."""
 
+    limit: int = _field("Maximum number of messages to return", default=10, ge=1, le=100)
+    cursor: str | None = _field(
+        "Opaque position token from a previous response, None for the first page",
+        default=None,
+    )
     room_id: RoomID | None = _field("Filter by chat room", default=None)
     search: str | None = _field("Full-text search", default=None)
     sort: Literal["asc", "desc"] = _field("Sort order", default="desc")
@@ -215,10 +219,6 @@ class PhotosUpload(TypedDict):
 
 class UsersPage(Paginated[UserOutSchema]):
     """Paginated user list."""
-
-
-class MessagesPage(Paginated[MessageOut]):
-    """Paginated message list."""
 
 
 class PhotosPage(Paginated[PhotoOut]):
